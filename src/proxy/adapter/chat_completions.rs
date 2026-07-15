@@ -1,4 +1,5 @@
 use anyhow::Result;
+use reqwest::header::HeaderMap;
 use reqwest::RequestBuilder;
 use serde_json::Value;
 
@@ -30,7 +31,12 @@ impl ProviderAdapter for ChatCompletionsAdapter {
         })
     }
 
-    fn apply_auth(&self, builder: RequestBuilder, profile: &ProfileConfig) -> RequestBuilder {
+    fn apply_auth(
+        &self,
+        builder: RequestBuilder,
+        profile: &ProfileConfig,
+        _inbound_headers: &HeaderMap,
+    ) -> RequestBuilder {
         if !profile.api_key.is_empty() {
             if profile.extra_env.contains_key("AZURE_AUTH")
                 || profile.base_url.contains("openai.azure.com")

@@ -5,6 +5,7 @@ mod responses;
 use anyhow::Result;
 use bytes::Bytes;
 use futures::stream::Stream;
+use reqwest::header::HeaderMap;
 use reqwest::RequestBuilder;
 use serde_json::Value;
 use std::pin::Pin;
@@ -44,7 +45,12 @@ pub trait ProviderAdapter: Send + Sync {
     }
 
     /// 设置认证头
-    fn apply_auth(&self, builder: RequestBuilder, profile: &ProfileConfig) -> RequestBuilder;
+    fn apply_auth(
+        &self,
+        builder: RequestBuilder,
+        profile: &ProfileConfig,
+        inbound_headers: &HeaderMap,
+    ) -> RequestBuilder;
 
     /// 设置额外头（如 ChatGPT-Account-ID），默认无操作
     fn apply_extra_headers(

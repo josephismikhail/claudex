@@ -105,6 +105,10 @@ async fn start_proxy_inner(
     let app = Router::new()
         .route("/v1/models", get(models::list_models))
         .route(
+            "/proxy/{profile}/v1/models",
+            get(models::list_profile_models),
+        )
+        .route(
             "/proxy/{profile}/v1/messages",
             post(handler::handle_messages),
         )

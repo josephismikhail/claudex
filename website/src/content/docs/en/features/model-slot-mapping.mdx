@@ -81,18 +81,18 @@ opus = "gemini-2.5-pro"
 
 ```toml
 [profiles.models]
-haiku = "codex-mini-latest"
-sonnet = "gpt-5.3-codex"
-opus = "gpt-5.3-codex"
+haiku = "gpt-5.6"
+sonnet = "gpt-5.6"
+opus = "gpt-5.6"
 ```
 
 ### Claude (Subscription)
 
 ```toml
 [profiles.models]
-haiku = "claude-haiku-4-20250514"
-sonnet = "claude-sonnet-4-20250514"
-opus = "claude-opus-4-20250514"
+haiku = "haiku"
+sonnet = "sonnet"
+opus = "opus"
 ```
 
 ### Groq
@@ -129,6 +129,38 @@ If `[profiles.models]` is not specified, all three slots fall back to the profil
 <Aside type="tip">
   For providers with only one or two model tiers, it's common to map multiple slots to the same model. For example, DeepSeek maps both haiku and sonnet to `deepseek-chat`, reserving opus for `deepseek-reasoner`.
 </Aside>
+
+## Route Slots Across Subscription Providers
+
+Use `model_routes` when one Claude Code session should use models from different provider accounts:
+
+```toml
+[[profiles]]
+name = "ultracode"
+provider_type = "OpenAIResponses"
+base_url = "https://chatgpt.com/backend-api/codex"
+default_model = "gpt-5.6"
+auth_type = "oauth"
+oauth_provider = "chatgpt"
+
+[profiles.models]
+haiku = "gpt-5.6"
+sonnet = "gpt-5.6"
+opus = "opus"
+
+[profiles.model_routes]
+"opus" = "claude-max"
+
+[[profiles]]
+name = "claude-max"
+provider_type = "DirectAnthropic"
+base_url = "https://api.anthropic.com"
+default_model = "opus"
+auth_type = "oauth"
+oauth_provider = "claude"
+```
+
+The profile-specific `/v1/models` catalog includes slot models and exact route keys, so `/model` can switch them without restarting. For ChatGPT subscription profiles, Claude Code's effort selection is mapped to Responses API `reasoning.effort`; ultracode therefore reaches GPT-5.6 as `xhigh` while Claude Code retains control of its subagent harness.
 
 ## Environment Variable Override
 

@@ -296,11 +296,11 @@ enabled = false
 ### OAuth Profile 範例
 
 ```toml
-# Claude Max（跳過代理，使用 Claude 從 ~/.claude 讀取的原生 OAuth）
+# Claude Max/Pro (local gateway reuses Claude Code OAuth from ~/.claude)
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -371,7 +371,7 @@ oauth_provider = "gitlab"
 ```
 
 <Aside type="caution">
-  對於 `claude` OAuth 提供商，Claudex 跳過代理，讓 Claude Code 直接使用自身的 OAuth。其他所有 OAuth 提供商由代理處理 token 管理和刷新。
+  Every OAuth provider uses the local gateway. Claude credentials come from Claude Code and ChatGPT credentials come from Codex; both can participate in `model_routes` in one session.
 </Aside>
 
 ## 智慧路由器

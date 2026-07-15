@@ -27,7 +27,7 @@ import { Aside } from '@astrojs/starlight/components';
 | GitHub Copilot | OpenAICompatible | OAuth | 支持 | 支持 | 支持 | Device Code 流程 |
 | GitLab Duo | OpenAICompatible | OAuth (PAT) | 支持 | 支持 | 支持 | `GITLAB_TOKEN` 环境变量 |
 | ChatGPT/Codex | OpenAIResponses | OAuth | 支持 | 支持 | 支持 | Responses API |
-| Claude（订阅） | DirectAnthropic | OAuth | 支持 | 支持 | 支持 | 跳过代理 |
+| Claude（订阅） | DirectAnthropic | OAuth | 支持 | 支持 | 支持 | Local gateway + Claude Code credentials |
 | Google Gemini（订阅） | OpenAICompatible | OAuth | 支持 | 支持 | 支持 | Gemini CLI 凭证 |
 | Qwen（订阅） | OpenAICompatible | OAuth | 支持 | 支持 | 支持 | Device Code 流程 |
 | Ollama | OpenAICompatible | 无 | 支持 | 取决于模型 | 支持 | 本地，无需 API 密钥 |
@@ -187,11 +187,11 @@ import { Aside } from '@astrojs/starlight/components';
 
 ### Claude（订阅）
 
-- **Base URL**: `https://api.claude.ai`
+- **Base URL**: `https://api.anthropic.com`
 - **类型**: DirectAnthropic
 - **认证**: OAuth（读取 `~/.claude/.credentials.json`）
 - **模型**: claude-sonnet-4, claude-opus-4, claude-haiku-4
-- **备注**: 跳过代理。Claude Code 直接使用自身的 OAuth。
+- **备注**: Uses the local gateway, which reuses and refreshes Claude Code OAuth credentials.
 
 ### Google Gemini（订阅）
 

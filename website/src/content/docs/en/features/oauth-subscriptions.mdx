@@ -16,7 +16,7 @@ Instead of providing an `api_key`, you configure `auth_type = "oauth"` and speci
 name = "codex-sub"
 provider_type = "OpenAIResponses"
 base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.6"
 auth_type = "oauth"
 oauth_provider = "openai"
 ```
@@ -37,8 +37,8 @@ oauth_provider = "openai"
 
 Each provider follows a credential chain pattern:
 
-1. **Check system keyring** for a previously stored token
-2. **Read from native CLI config** (provider-specific paths)
+1. **Read the native CLI credential cache** (provider-specific paths)
+2. **Fall back to the system keyring** for a profile-specific token
 3. **Initiate OAuth flow** (browser PKCE or device code) if no token found
 
 Once obtained, tokens are stored in the system keyring for subsequent use.
@@ -63,7 +63,7 @@ OAuthToken {
 The proxy checks token expiry before each request. If a token is within 60 seconds of expiration:
 
 1. Attempt to refresh using `refresh_token` (if available)
-2. On successful refresh, update the keyring
+2. On successful refresh, atomically update the owning local credential store
 3. If refresh fails, invalidate the token and prompt re-login on next use
 
 ### 401 Retry
@@ -79,19 +79,19 @@ When a provider returns HTTP 401, the proxy:
 
 ### Claude
 
-Claude OAuth profiles are special: **the proxy is skipped entirely**. When you run a Claude OAuth profile, Claudex launches Claude Code directly without setting `ANTHROPIC_BASE_URL`. Claude Code uses its own built-in OAuth session from `~/.claude/.credentials.json`.
+Claude OAuth profiles run through the same loopback gateway as other providers. The gateway reuses Claude Code's OAuth session from `~/.claude/.credentials.json`, sends the required Bearer OAuth headers upstream, and atomically persists rotated refresh tokens. Keeping Claude behind the gateway allows `model_routes` to switch between Claude and ChatGPT subscriptions in one session.
 
 ```toml
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
-default_model = "claude-sonnet-4-20250514"
+base_url = "https://api.anthropic.com"
+default_model = "sonnet"
 auth_type = "oauth"
 oauth_provider = "claude"
 ```
 
-No `claudex auth login` step is needed. If you are already logged in to Claude Code, it works immediately.
+No separate Claudex OAuth flow is required. Run `claude auth login` once; `claudex auth login claude --profile claude-max` can also copy the local token into the OS credential store.
 
 ### ChatGPT / Codex
 
@@ -154,13 +154,13 @@ Reads credentials from the Kimi CLI configuration, similar to the Google Gemini 
 
 ## Gateway Auth Mode
 
-When launching Claude Code with an OAuth profile (except Claude), Claudex sets:
+When launching Claude Code with any OAuth profile, Claudex sets:
 
 ```
 ANTHROPIC_AUTH_TOKEN=claudex-passthrough
 ```
 
-This uses the `Authorization: Bearer` header instead of `X-Api-Key`, preventing conflicts with Claude Code's own `ANTHROPIC_API_KEY` mechanism. The proxy then replaces the passthrough token with the actual OAuth token.
+This prevents a conflict with Claude Code's own login. The placeholder is accepted only by the local gateway and is replaced with the selected provider's actual credential before the upstream request.
 
 ## CLI Commands
 
@@ -187,8 +187,8 @@ When you create a profile with `auth_type = "oauth"`, each provider has built-in
 
 | Provider | Default base_url | Default provider_type | Default model |
 |----------|-----------------|----------------------|---------------|
-| Claude | `https://api.claude.ai` | DirectAnthropic | `claude-sonnet-4-20250514` |
-| ChatGPT | `https://chatgpt.com/backend-api/codex` | OpenAIResponses | `gpt-5.3-codex` |
+| Claude | `https://api.anthropic.com` | DirectAnthropic | `sonnet` |
+| ChatGPT | `https://chatgpt.com/backend-api/codex` | OpenAIResponses | `gpt-5.6` |
 | GitHub | `https://api.githubcopilot.com` | OpenAICompatible | `gpt-4o` |
 | GitLab | `https://gitlab.com/api/v4/ai/llm/proxy` | OpenAICompatible | `claude-sonnet-4-20250514` |
 | Google | `https://generativelanguage.googleapis.com/v1beta/openai` | OpenAICompatible | `gemini-2.5-pro` |

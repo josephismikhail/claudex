@@ -87,6 +87,11 @@ claudex profile test all
 # 4. Run Claude Code with a specific provider
 claudex run grok
 
+# With exactly one enabled profile, this launches it immediately
+claudex
+
+# With multiple enabled profiles, bare `claudex` opens the profile picker
+
 # 5. Or use smart routing to auto-select the best provider
 claudex run auto
 ```
@@ -134,8 +139,8 @@ The proxy intercepts requests and handles protocol translation:
 | Google Vertex AI | DirectAnthropic | None | Bearer (gcloud) | `claude-sonnet-4@...` |
 | Ollama | OpenAICompatible | Anthropic <-> OpenAI | None | `qwen2.5:72b` |
 | LM Studio | OpenAICompatible | Anthropic <-> OpenAI | None | local model |
-| ChatGPT/Codex sub | OpenAIResponses | Anthropic <-> Responses | OAuth (PKCE/Device) | `gpt-5.3-codex` |
-| Claude Max sub | DirectAnthropic | None | OAuth (file) | `claude-sonnet-4` |
+| ChatGPT/Codex sub | OpenAIResponses | Anthropic <-> Responses | OAuth (Codex login) | `gpt-5.6` |
+| Claude Max/Pro sub | DirectAnthropic | None | OAuth (Claude Code login) | `sonnet` |
 | GitHub Copilot | OpenAICompatible | Anthropic <-> OpenAI | OAuth (Device+Bearer) | `gpt-4o` |
 | GitLab Duo | OpenAICompatible | Anthropic <-> OpenAI | GITLAB_TOKEN | `claude-sonnet-4` |
 
@@ -155,6 +160,7 @@ Supports TOML and YAML formats. See [`config.example.toml`](./config.example.tom
 
 | Command | Description |
 |---------|-------------|
+| `claudex` | Auto-launch the sole enabled profile, or open the picker when several are enabled |
 | `claudex run <profile>` | Run Claude Code with a specific provider |
 | `claudex run auto` | Smart routing — auto-select best provider |
 | `claudex run <profile> -m <model>` | Override model for a session |
@@ -189,8 +195,15 @@ Supports TOML and YAML formats. See [`config.example.toml`](./config.example.tom
 Use existing subscriptions instead of API keys:
 
 ```bash
+# First authenticate the official clients (one time)
+codex login
+claude auth login
+
 # ChatGPT subscription (auto-detects existing Codex CLI credentials)
 claudex auth login chatgpt --profile codex-sub
+
+# Claude Max/Pro subscription (auto-detects Claude Code credentials)
+claudex auth login claude --profile claude-max
 
 # ChatGPT force browser login
 claudex auth login chatgpt --profile codex-sub --force
@@ -234,36 +247,37 @@ sonnet = "deepseek/deepseek-chat-v3-0324"
 opus = "deepseek/deepseek-r1"
 ```
 
-### Mix Chat and Claude models in one launched profile
+### Mix ChatGPT and Claude subscriptions in one session
 
-`model_routes` sends an exact model ID to another configured profile. The launched profile remains the default provider; only matching model calls are redirected. This works with Claude Code's haiku/sonnet/opus slots, including subagent calls that select those models.
+`model_routes` sends an exact model ID to another configured profile. Both profiles can use OAuth subscriptions; no API keys are required. Claude Code's `/model`, `/effort`, and ultracode orchestration stay in the same session, including subagent calls.
 
 ```toml
 [[profiles]]
 name = "ultracode"
 provider_type = "OpenAIResponses"
-base_url = "https://your-chat-endpoint.example/v1"
-api_key = "YOUR_CHAT_KEY"
-default_model = "chat-model"
+base_url = "https://chatgpt.com/backend-api/codex"
+default_model = "gpt-5.6"
+auth_type = "oauth"
+oauth_provider = "chatgpt"
 
 [profiles.models]
-haiku = "claude-haiku-model"
-sonnet = "chat-model"
-opus = "claude-opus-model"
+haiku = "gpt-5.6"
+sonnet = "gpt-5.6"
+opus = "opus"
 
 [profiles.model_routes]
-"claude-haiku-model" = "anthropic"
-"claude-opus-model" = "anthropic"
+"opus" = "claude-max"
 
 [[profiles]]
-name = "anthropic"
+name = "claude-max"
 provider_type = "DirectAnthropic"
 base_url = "https://api.anthropic.com"
-api_key = "YOUR_ANTHROPIC_KEY"
-default_model = "claude-opus-model"
+default_model = "opus"
+auth_type = "oauth"
+oauth_provider = "claude"
 ```
 
-The target profiles must exist and be enabled. Run `claudex config validate` after editing the routes.
+Run `claudex run ultracode`, then use `/model` to switch. Claude Code maps ultracode to `xhigh`; Claudex forwards that as GPT-5.6 `reasoning.effort`. The target profiles must exist and be enabled. Run `claudex config validate` after editing the routes.
 
 ## Privacy
 

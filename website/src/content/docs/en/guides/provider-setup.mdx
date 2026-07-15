@@ -20,7 +20,7 @@ name = "anthropic"
 provider_type = "DirectAnthropic"
 base_url = "https://api.anthropic.com"
 api_key = "sk-ant-..."
-default_model = "claude-sonnet-4-20250514"
+default_model = "sonnet"
 ```
 
 ```bash
@@ -341,19 +341,19 @@ Use your existing Claude subscription through Claude Code's native OAuth session
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
 
 [profiles.models]
-haiku = "claude-haiku-4-20250514"
-sonnet = "claude-sonnet-4-20250514"
-opus = "claude-opus-4-20250514"
+haiku = "haiku"
+sonnet = "sonnet"
+opus = "opus"
 ```
 
 <Aside type="note">
-  Claude OAuth profiles use a special gateway auth mode. Claudex skips the proxy and lets Claude Code use its own OAuth directly. No separate `claudex auth login` step is needed.
+  Claude OAuth profiles use the loopback gateway, which reads and refreshes Claude Code's local credentials. This keeps cross-provider `model_routes` active. Authenticate once with `claude auth login`; no separate browser flow inside Claudex is required.
 </Aside>
 
 ### ChatGPT Plus / Codex CLI
@@ -367,7 +367,7 @@ Use your ChatGPT Plus or Pro subscription via the Codex CLI token.
 npm install -g @openai/codex
 
 # Authenticate (opens browser)
-codex auth
+codex login
 ```
 
 Then configure Claudex:
@@ -377,14 +377,14 @@ Then configure Claudex:
 name = "codex-sub"
 provider_type = "OpenAIResponses"
 base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.6"
 auth_type = "oauth"
 oauth_provider = "openai"
 
 [profiles.models]
-haiku = "codex-mini-latest"
-sonnet = "gpt-5.3-codex"
-opus = "gpt-5.3-codex"
+haiku = "gpt-5.6"
+sonnet = "gpt-5.6"
+opus = "gpt-5.6"
 ```
 
 ```bash
@@ -399,7 +399,7 @@ claudex run codex-sub
 ```
 
 <Aside type="tip">
-  Supported models on the Codex endpoint: `gpt-5.3-codex`, `gpt-5.1-codex`, `codex-mini-latest`. Note that `gpt-4o` is NOT supported on the `chatgpt.com` Codex endpoint. `strip_params = "auto"` will automatically detect this endpoint and strip `temperature`/`top_p`/`top_k`.
+  Model availability is determined by the signed-in Codex account. Set `default_model` and the slots to IDs shown by that account. `strip_params = "auto"` detects the ChatGPT Codex endpoint and removes unsupported sampling parameters.
 </Aside>
 
 ### Google Gemini

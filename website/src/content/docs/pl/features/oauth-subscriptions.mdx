@@ -79,13 +79,13 @@ Gdy dostawca zwroci HTTP 401, proxy:
 
 ### Claude
 
-Profile OAuth Claude sa specjalne: **proxy jest calkowicie pomijane**. Gdy uruchamiasz profil OAuth Claude, Claudex uruchamia Claude Code bezposrednio bez ustawiania `ANTHROPIC_BASE_URL`. Claude Code uzywa wlasnej wbudowanej sesji OAuth z `~/.claude/.credentials.json`.
+Claudex routes Claude OAuth profiles through its local loopback gateway. The gateway reuses Claude Code's credentials from `~/.claude/.credentials.json`, applies the required Bearer OAuth headers, refreshes rotated tokens atomically, and keeps cross-provider `model_routes` active.
 
 ```toml
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -187,7 +187,7 @@ Gdy tworzysz profil z `auth_type = "oauth"`, kazdy dostawca ma wbudowane domysln
 
 | Dostawca | Domyslny base_url | Domyslny provider_type | Domyslny model |
 |----------|-------------------|------------------------|----------------|
-| Claude | `https://api.claude.ai` | DirectAnthropic | `claude-sonnet-4-20250514` |
+| Claude | `https://api.anthropic.com` | DirectAnthropic | `claude-sonnet-4-20250514` |
 | ChatGPT | `https://chatgpt.com/backend-api/codex` | OpenAIResponses | `gpt-5.3-codex` |
 | GitHub | `https://api.githubcopilot.com` | OpenAICompatible | `gpt-4o` |
 | GitLab | `https://gitlab.com/api/v4/ai/llm/proxy` | OpenAICompatible | `claude-sonnet-4-20250514` |

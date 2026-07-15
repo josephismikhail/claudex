@@ -145,25 +145,24 @@ priority = 70
 # ─── OAuth Subscription Profiles ───────────────────────
 # Login first: claudex auth login <provider> --profile <name>
 
-# Claude Max (via Claude Code's own OAuth)
+# Claude Max/Pro (reuses Claude Code's local OAuth credentials)
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
-default_model = "claude-sonnet-4-20250514"
+base_url = "https://api.anthropic.com"
+default_model = "sonnet"
 auth_type = "oauth"
 oauth_provider = "claude"
 enabled = false
 
 # ChatGPT Plus/Pro / Codex subscription (via OpenAI OAuth → Responses API)
-# Supported models: gpt-5.3-codex, gpt-5.1-codex, codex-mini-latest
-# Note: gpt-4o is NOT supported on the Codex ChatGPT endpoint
+# The signed-in account controls which model IDs are available.
 # strip_params = "auto" will auto-detect chatgpt.com and strip temperature/top_p/top_k
 [[profiles]]
 name = "codex-sub"
 provider_type = "OpenAIResponses"
 base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.6"
 auth_type = "oauth"
 oauth_provider = "openai"
 enabled = false

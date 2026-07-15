@@ -184,6 +184,30 @@ pub fn anthropic_to_responses(
         body["top_p"] = top_p.clone();
     }
 
+    // Claude Code sends its selected effort level through Anthropic's
+    // output_config.effort field. Preserve that intent when the target is the
+    // OpenAI Responses API; otherwise ultracode/xhigh silently falls back to
+    // the provider default.
+    if let Some(effort) = anthropic
+        .pointer("/output_config/effort")
+        .or_else(|| anthropic.get("effort"))
+        .and_then(Value::as_str)
+    {
+        let effort = if effort == "ultracode" {
+            // Ultracode is a Claude Code orchestration mode. Its API-level
+            // effort is xhigh; the subagent permission remains in the prompt.
+            "xhigh"
+        } else {
+            effort
+        };
+        if matches!(
+            effort,
+            "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+        ) {
+            body["reasoning"] = json!({"effort": effort});
+        }
+    }
+
     // Tools
     if let Some(tools) = anthropic.get("tools").and_then(|t| t.as_array()) {
         let resp_tools: Vec<Value> = tools
@@ -524,5 +548,27 @@ mod tests {
         });
         let (body, _) = anthropic_to_responses(&anthropic, "gpt-4o").unwrap();
         assert_eq!(body["instructions"], "Part 1.\nPart 2.");
+    }
+
+    #[test]
+    fn test_maps_claude_code_effort_to_responses_reasoning() {
+        let anthropic = json!({
+            "model": "gpt-5.6",
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "delegate this task"}],
+        });
+        let (body, _) = anthropic_to_responses(&anthropic, "gpt-5.6").unwrap();
+        assert_eq!(body["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_maps_ultracode_label_to_xhigh_defensively() {
+        let anthropic = json!({
+            "model": "gpt-5.6",
+            "effort": "ultracode",
+            "messages": [{"role": "user", "content": "delegate this task"}],
+        });
+        let (body, _) = anthropic_to_responses(&anthropic, "gpt-5.6").unwrap();
+        assert_eq!(body["reasoning"]["effort"], "xhigh");
     }
 }

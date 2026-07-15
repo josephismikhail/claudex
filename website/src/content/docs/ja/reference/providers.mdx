@@ -27,7 +27,7 @@ import { Aside } from '@astrojs/starlight/components';
 | GitHub Copilot | OpenAICompatible | OAuth | 対応 | 対応 | 対応 | デバイスコードフロー |
 | GitLab Duo | OpenAICompatible | OAuth (PAT) | 対応 | 対応 | 対応 | `GITLAB_TOKEN` 環境変数 |
 | ChatGPT/Codex | OpenAIResponses | OAuth | 対応 | 対応 | 対応 | Responses API |
-| Claude（サブスクリプション） | DirectAnthropic | OAuth | 対応 | 対応 | 対応 | プロキシスキップ |
+| Claude（サブスクリプション） | DirectAnthropic | OAuth | 対応 | 対応 | 対応 | Local gateway + Claude Code credentials |
 | Google Gemini（サブスクリプション） | OpenAICompatible | OAuth | 対応 | 対応 | 対応 | Gemini CLI クレデンシャル |
 | Qwen（サブスクリプション） | OpenAICompatible | OAuth | 対応 | 対応 | 対応 | デバイスコードフロー |
 | Ollama | OpenAICompatible | なし | 対応 | モデル依存 | 対応 | ローカル、API キー不要 |
@@ -187,11 +187,11 @@ import { Aside } from '@astrojs/starlight/components';
 
 ### Claude（サブスクリプション）
 
-- **ベース URL**: `https://api.claude.ai`
+- **ベース URL**: `https://api.anthropic.com`
 - **タイプ**: DirectAnthropic
 - **認証**: OAuth（`~/.claude/.credentials.json` から読み取り）
 - **モデル**: claude-sonnet-4、claude-opus-4、claude-haiku-4
-- **特記**: プロキシはスキップされます。Claude Code が自身の OAuth を直接使用。
+- **特記**: Uses the local gateway, which reuses and refreshes Claude Code OAuth credentials.
 
 ### Google Gemini（サブスクリプション）
 

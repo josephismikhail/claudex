@@ -27,7 +27,7 @@ import { Aside } from '@astrojs/starlight/components';
 | GitHub Copilot | OpenAICompatible | OAuth | Yes | Yes | Yes | Device Code flow |
 | GitLab Duo | OpenAICompatible | OAuth (PAT) | Yes | Yes | Yes | `GITLAB_TOKEN` env |
 | ChatGPT/Codex | OpenAIResponses | OAuth | Yes | Yes | Yes | Responses API |
-| Claude (Sub) | DirectAnthropic | OAuth | Yes | Yes | Yes | Skips proxy |
+| Claude (Sub) | DirectAnthropic | OAuth | Yes | Yes | Yes | Local gateway + Claude Code credentials |
 | Google Gemini (Sub) | OpenAICompatible | OAuth | Yes | Yes | Yes | Gemini CLI credentials |
 | Qwen (Sub) | OpenAICompatible | OAuth | Yes | Yes | Yes | Device Code flow |
 | Ollama | OpenAICompatible | None | Yes | Model-dependent | Yes | Local, no API key |
@@ -182,16 +182,16 @@ import { Aside } from '@astrojs/starlight/components';
 - **Base URL**: `https://chatgpt.com/backend-api/codex`
 - **Type**: OpenAIResponses
 - **Auth**: OAuth (Browser PKCE / Device Code)
-- **Models**: gpt-5.3-codex, gpt-5.1-codex, codex-mini-latest
+- **Models**: Models available to the signed-in Codex account (for example `gpt-5.6`)
 - **Note**: Uses Responses API, not Chat Completions. `strip_params = "auto"` strips unsupported params.
 
 ### Claude (Subscription)
 
-- **Base URL**: `https://api.claude.ai`
+- **Base URL**: `https://api.anthropic.com`
 - **Type**: DirectAnthropic
 - **Auth**: OAuth (reads `~/.claude/.credentials.json`)
-- **Models**: claude-sonnet-4, claude-opus-4, claude-haiku-4
-- **Note**: Proxy is skipped. Claude Code uses its own OAuth directly.
+- **Models**: `sonnet`, `opus`, `haiku`, or full model IDs allowed by the subscription
+- **Note**: Uses the local gateway, which reuses and refreshes Claude Code's OAuth credentials.
 
 ### Google Gemini (Subscription)
 

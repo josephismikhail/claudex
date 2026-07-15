@@ -1,4 +1,5 @@
 use anyhow::Result;
+use reqwest::header::HeaderMap;
 use reqwest::RequestBuilder;
 use serde_json::Value;
 
@@ -29,7 +30,12 @@ impl ProviderAdapter for ResponsesAdapter {
         })
     }
 
-    fn apply_auth(&self, builder: RequestBuilder, profile: &ProfileConfig) -> RequestBuilder {
+    fn apply_auth(
+        &self,
+        builder: RequestBuilder,
+        profile: &ProfileConfig,
+        _inbound_headers: &HeaderMap,
+    ) -> RequestBuilder {
         if !profile.api_key.is_empty() {
             builder.header("Authorization", format!("Bearer {}", profile.api_key))
         } else {
