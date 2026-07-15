@@ -44,7 +44,6 @@ Claudex ist ein einheitlicher Proxy, der es [Claude Code](https://docs.anthropic
 - **OAuth-Abonnements** — ChatGPT/Codex, Claude Max, GitHub Copilot, GitLab Duo, Google Gemini, Qwen, Kimi
 - **Konfigurationssets** — Wiederverwendbare Claude Code Konfigurationssets aus Git-Repos installieren und verwalten
 - **TUI-Dashboard** — Echtzeit-Profilzustand, Metriken, Protokolle und Schnellstart
-- **Selbst-Update** — `claudex update` lädt die neueste Version von GitHub herunter
 
 ## Installation
 
@@ -167,7 +166,6 @@ Unterstützt TOML- und YAML-Format. Vollständige Referenz in [`config.example.t
 | `claudex config get <key>` | Konfigurationswert abrufen |
 | `claudex config set <key> <value>` | Konfigurationswert setzen |
 | `claudex config export --format <fmt>` | Konfiguration exportieren (json/toml/yaml) |
-| `claudex update [--check]` | Selbst-Update von GitHub Releases |
 | `claudex auth login <provider>` | OAuth-Anmeldung |
 | `claudex auth login github --enterprise-url <domain>` | GitHub Enterprise Copilot |
 | `claudex auth status` | OAuth-Token-Status anzeigen |
@@ -234,7 +232,7 @@ opus = "deepseek/deepseek-r1"
 src/
 ├── main.rs
 ├── cli.rs
-├── update.rs
+├── privacy.rs
 ├── util.rs
 ├── config/
 │   ├── mod.rs          # Konfigurationssuche + Parsing (figment)

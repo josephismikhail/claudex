@@ -326,23 +326,6 @@ export default defineConfig({
               },
             },
             {
-              slug: 'features/self-update',
-              label: 'Self Update',
-              translations: {
-                'zh-CN': '自动更新',
-                'zh-TW': '自動更新',
-                ja: '自動更新',
-                ko: '자동 업데이트',
-                ru: 'Самообновление',
-                fr: 'Mise a jour automatique',
-                'pt-BR': 'Atualizacao automatica',
-                es: 'Actualizacion automatica',
-                it: 'Aggiornamento automatico',
-                de: 'Automatisches Update',
-                pl: 'Automatyczna aktualizacja',
-              },
-            },
-            {
               slug: 'features/oauth-subscriptions',
               label: 'OAuth Subscriptions',
               translations: {

@@ -54,13 +54,6 @@ pub enum Commands {
         action: Option<ConfigAction>,
     },
 
-    /// Self-update claudex binary
-    Update {
-        /// Only check for updates, don't install
-        #[arg(long)]
-        check: bool,
-    },
-
     /// Manage OAuth authentication for subscription services
     Auth {
         #[command(subcommand)]

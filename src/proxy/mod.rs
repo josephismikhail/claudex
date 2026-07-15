@@ -77,27 +77,13 @@ async fn start_proxy_inner(
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
-    // Build RAG index if enabled
-    let rag_index = if config.context.rag.enabled {
-        let index = RagIndex::new(config.context.rag.clone());
-        if let Some((base_url, api_key, _)) = crate::context::resolve_profile_endpoint(
-            &config,
-            &config.context.rag.profile,
-            &config.context.rag.model,
-        ) {
-            if let Err(e) = index.build_index(&http_client, &base_url, &api_key).await {
-                tracing::warn!("failed to build RAG index: {e}");
-            }
-        } else {
-            tracing::warn!(
-                profile = %config.context.rag.profile,
-                "RAG profile not found, skipping index build"
-            );
-        }
-        Some(index)
-    } else {
-        None
-    };
+    // RAG indexing is lazy. Building here would contact an embedding provider
+    // merely because the proxy started, before the user made a model request.
+    let rag_index = config
+        .context
+        .rag
+        .enabled
+        .then(|| RagIndex::new(config.context.rag.clone()));
 
     let token_manager = crate::oauth::manager::TokenManager::new(http_client.clone());
 
@@ -112,7 +98,9 @@ async fn start_proxy_inner(
         token_manager,
     });
 
-    health::spawn_health_checker(state.clone());
+    // Do not probe provider endpoints in the background. A provider is
+    // contacted only for an actual proxied request or an explicit connectivity
+    // test requested by the user.
 
     let app = Router::new()
         .route("/v1/models", get(models::list_models))
@@ -189,5 +177,49 @@ mod tests {
             .unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(is_proxy_reachable("127.0.0.1", port).await);
+    }
+
+    #[tokio::test]
+    async fn proxy_startup_does_not_contact_enabled_profiles() {
+        let provider_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let provider_addr = provider_listener.local_addr().unwrap();
+
+        let port_probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let proxy_port = port_probe.local_addr().unwrap().port();
+        drop(port_probe);
+
+        let dir = tempfile::tempdir().unwrap();
+        let indexed_file = dir.path().join("private.md");
+        std::fs::write(&indexed_file, "this content must not leave during startup").unwrap();
+
+        let mut config = ClaudexConfig {
+            proxy_host: "127.0.0.1".to_string(),
+            proxy_port,
+            profiles: vec![crate::config::ProfileConfig {
+                name: "remote".to_string(),
+                base_url: format!("http://{provider_addr}"),
+                default_model: "model".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        config.context.rag.enabled = true;
+        config.context.rag.profile = "remote".to_string();
+        config.context.rag.model = "embedding-model".to_string();
+        config.context.rag.index_paths = vec![indexed_file.to_string_lossy().into_owned()];
+
+        let proxy = tokio::spawn(start_embedded_proxy(config, None));
+        assert!(wait_for_proxy("127.0.0.1", proxy_port, Duration::from_secs(2)).await);
+
+        let unexpected_connection =
+            tokio::time::timeout(Duration::from_millis(250), provider_listener.accept()).await;
+        proxy.abort();
+
+        assert!(
+            unexpected_connection.is_err(),
+            "proxy startup contacted a configured provider"
+        );
     }
 }

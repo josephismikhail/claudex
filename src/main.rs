@@ -4,13 +4,13 @@ mod cli;
 mod config;
 mod context;
 mod oauth;
+mod privacy;
 mod process;
 mod proxy;
 mod router;
 mod sets;
 mod terminal;
 mod tui;
-mod update;
 mod util;
 
 use anyhow::Result;
@@ -166,17 +166,6 @@ async fn main() -> Result<()> {
 
         Some(Commands::Config { action }) => {
             config::cmd::dispatch(action, &mut config).await?;
-        }
-
-        Some(Commands::Update { check }) => {
-            if check {
-                match update::check_update().await? {
-                    Some(version) => println!("New version available: {version}"),
-                    None => println!("Already up to date (v{})", env!("CARGO_PKG_VERSION")),
-                }
-            } else {
-                update::self_update().await?;
-            }
         }
 
         Some(Commands::Sets { action }) => match action {

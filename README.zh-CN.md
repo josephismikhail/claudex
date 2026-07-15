@@ -44,7 +44,6 @@ Claudex 是一个统一代理，通过自动协议翻译让 [Claude Code](https:
 - **OAuth 订阅** — ChatGPT/Codex、Claude Max、GitHub Copilot、GitLab Duo、Google Gemini、Qwen、Kimi
 - **配置集** — 从 git 仓库安装和管理可复用的 Claude Code 配置集
 - **TUI 仪表盘** — 实时 profile 健康状态、指标、日志及快速启动
-- **自动更新** — `claudex update` 从 GitHub 下载最新版本
 
 ## 安装
 
@@ -167,7 +166,6 @@ Claudex 按以下顺序查找配置文件：
 | `claudex config get <key>` | 获取配置值 |
 | `claudex config set <key> <value>` | 设置配置值 |
 | `claudex config export --format <fmt>` | 导出配置（json/toml/yaml）|
-| `claudex update [--check]` | 从 GitHub Releases 自动更新 |
 | `claudex auth login <provider>` | OAuth 登录 |
 | `claudex auth login github --enterprise-url <domain>` | GitHub Enterprise Copilot |
 | `claudex auth status` | 显示 OAuth token 状态 |
@@ -234,7 +232,7 @@ opus = "deepseek/deepseek-r1"
 src/
 ├── main.rs
 ├── cli.rs
-├── update.rs
+├── privacy.rs
 ├── util.rs
 ├── config/
 │   ├── mod.rs          # 配置发现与解析（figment）
