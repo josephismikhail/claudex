@@ -12,8 +12,12 @@ static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
 static ABS_PATH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/[\w./_-]+\.\w+(?::\d+(?::\d+)?)?").unwrap());
 
-static WINDOWS_ABS_PATH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z]:\\[\w.\\/_-]+\.\w+(?::\d+(?::\d+)?)?").unwrap());
+static WINDOWS_ABS_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // Windows temp/workspace paths commonly contain spaces, tildes, and
+    // Unicode. Match everything Windows permits in a path segment while
+    // excluding reserved characters and the colon used by :line:column.
+    Regex::new(r#"[A-Za-z]:[\\/][^\r\n\t<>\"|?*:]+\.[A-Za-z0-9_]+(?::\d+(?::\d+)?)?"#).unwrap()
+});
 
 static REL_PATH_DOTSLASH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:\.\./|\./)([\w./_-]+)(?::\d+(?::\d+)?)?").unwrap());
@@ -308,7 +312,8 @@ mod tests {
 
     #[test]
     fn test_absolute_path_existing_file() {
-        let dir = std::env::temp_dir().join("claudex_test_osc8");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("claudex test~osc8");
         fs::create_dir_all(&dir).unwrap();
         let test_file = dir.join("test.rs");
         fs::write(&test_file, "fn main() {}").unwrap();
@@ -319,8 +324,6 @@ mod tests {
         let result = d.enhance_line(&input);
         assert!(result.contains("\x1b]8;;file://"));
         assert!(result.contains("test.rs"));
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
