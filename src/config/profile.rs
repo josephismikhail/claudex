@@ -38,6 +38,14 @@ pub async fn show_profile(config: &ClaudexConfig, name: &str) -> Result<()> {
     if !profile.backup_providers.is_empty() {
         println!("Backups:        {}", profile.backup_providers.join(", "));
     }
+    if !profile.model_routes.is_empty() {
+        let mut routes: Vec<_> = profile.model_routes.iter().collect();
+        routes.sort_by_key(|(model, _)| *model);
+        println!("Model Routes:");
+        for (model, target) in routes {
+            println!("  {model} -> {target}");
+        }
+    }
     if !profile.custom_headers.is_empty() {
         println!("Custom Headers: {:?}", profile.custom_headers);
     }

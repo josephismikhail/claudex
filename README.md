@@ -4,10 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/StringKe/claudex/actions/workflows/ci.yml"><img src="https://github.com/StringKe/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://github.com/StringKe/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
-  <a href="https://github.com/StringKe/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StringKe/claudex" alt="License"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://img.shields.io/github/v/release/StringKe/claudex" alt="Latest Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml"><img src="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://github.com/josephismikhail/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/josephismikhail/claudex" alt="License"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://img.shields.io/github/v/release/josephismikhail/claudex" alt="Latest Release"></a>
 </p>
 
 <p align="center">
@@ -33,9 +33,12 @@
 
 Claudex is a unified proxy that lets [Claude Code](https://docs.anthropic.com/en/docs/claude-code) seamlessly work with multiple AI providers through automatic protocol translation.
 
+This is a Windows-first stability fork of [StringKe/claudex](https://github.com/StringKe/claudex). It retains the upstream MIT license and adds native PowerShell installation, Windows releases, safer terminal ownership, bounded PTY buffering, and crash-safe configuration writes.
+
 ## Features
 
 - **Multi-provider proxy** — DirectAnthropic passthrough + Anthropic <-> OpenAI Chat Completions translation + Anthropic <-> Responses API translation
+- **Mixed-provider sessions** — route exact model IDs to different provider profiles while launching Claude Code once
 - **20+ providers** — Anthropic, OpenRouter, Grok, OpenAI, DeepSeek, Kimi, GLM, Groq, Mistral, Together AI, Perplexity, Cerebras, Azure OpenAI, Google Vertex AI, Ollama, LM Studio, and more
 - **Streaming translation** — Full SSE stream translation with tool call support
 - **Circuit breaker + failover** — Automatic fallback to backup providers with configurable thresholds
@@ -48,22 +51,26 @@ Claudex is a unified proxy that lets [Claude Code](https://docs.anthropic.com/en
 
 ## Installation
 
+```powershell
+# Windows PowerShell (x64)
+irm https://raw.githubusercontent.com/josephismikhail/claudex/main/install.ps1 | iex
+```
+
 ```bash
-# One-liner (Linux / macOS)
-curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
 
 # From source
-cargo install --git https://github.com/StringKe/claudex
+cargo install --git https://github.com/josephismikhail/claudex
 
 # Or download from GitHub Releases
-# https://github.com/StringKe/claudex/releases
+# https://github.com/josephismikhail/claudex/releases
 ```
 
 ### System Requirements
 
-- macOS (Intel / Apple Silicon) or Linux (x86_64 / ARM64)
+- Windows x64, macOS (Intel / Apple Silicon), or Linux (x86_64 / ARM64)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
-- Windows: download pre-built binary from [Releases](https://github.com/StringKe/claudex/releases)
 
 ## Quick Start
 
@@ -227,6 +234,37 @@ haiku = "deepseek/deepseek-chat-v3-0324"
 sonnet = "deepseek/deepseek-chat-v3-0324"
 opus = "deepseek/deepseek-r1"
 ```
+
+### Mix Chat and Claude models in one launched profile
+
+`model_routes` sends an exact model ID to another configured profile. The launched profile remains the default provider; only matching model calls are redirected. This works with Claude Code's haiku/sonnet/opus slots, including subagent calls that select those models.
+
+```toml
+[[profiles]]
+name = "ultracode"
+provider_type = "OpenAIResponses"
+base_url = "https://your-chat-endpoint.example/v1"
+api_key = "YOUR_CHAT_KEY"
+default_model = "chat-model"
+
+[profiles.models]
+haiku = "claude-haiku-model"
+sonnet = "chat-model"
+opus = "claude-opus-model"
+
+[profiles.model_routes]
+"claude-haiku-model" = "anthropic"
+"claude-opus-model" = "anthropic"
+
+[[profiles]]
+name = "anthropic"
+provider_type = "DirectAnthropic"
+base_url = "https://api.anthropic.com"
+api_key = "YOUR_ANTHROPIC_KEY"
+default_model = "claude-opus-model"
+```
+
+The target profiles must exist and be enabled. Run `claudex config validate` after editing the routes.
 
 ## Architecture
 

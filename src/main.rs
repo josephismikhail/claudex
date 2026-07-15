@@ -28,8 +28,11 @@ async fn main() -> Result<()> {
 
     let mut config = ClaudexConfig::load(cli.config.as_deref())?;
 
-    // `claudex run` 时 proxy 日志只写文件，不污染 Claude Code 终端输出
-    let is_run_command = matches!(&cli.command, Some(Commands::Run { .. }));
+    // Full-screen terminal sessions must never receive tracing output on stderr.
+    // In particular, launching Claude from the dashboard keeps the same tracing
+    // subscriber alive after leaving the dashboard. Writing proxy request logs
+    // to stderr at that point corrupts Claude Code's terminal renderer.
+    let owns_terminal = command_owns_terminal(&cli.command, !config.profiles.is_empty());
 
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
@@ -51,8 +54,9 @@ async fn main() -> Result<()> {
             })
     });
 
-    // stderr（run 模式不输出）
-    let stderr_layer = if is_run_command {
+    // Keep interactive/full-screen terminal output pristine. Logs are still
+    // written to the per-process log file configured above.
+    let stderr_layer = if owns_terminal {
         None
     } else {
         Some(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
@@ -72,11 +76,9 @@ async fn main() -> Result<()> {
             args,
         }) => {
             // Ensure proxy is running
-            if !process::daemon::is_proxy_running()? {
+            if !proxy::is_proxy_reachable(&config.proxy_host, config.proxy_port).await {
                 tracing::info!("proxy not running, starting in background...");
                 start_proxy_background(&config).await?;
-                // Brief wait for proxy to be ready
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
 
             let profile = config
@@ -118,7 +120,30 @@ async fn main() -> Result<()> {
                 daemon: as_daemon,
             } => {
                 if as_daemon {
-                    start_proxy_background(&config).await?;
+                    let actual_port = port.unwrap_or(config.proxy_port);
+                    if proxy::is_proxy_reachable(&config.proxy_host, actual_port).await {
+                        println!(
+                            "Proxy is already reachable at {}:{}",
+                            config.proxy_host, actual_port
+                        );
+                    } else {
+                        let pid = process::daemon::spawn_proxy_daemon(&config, port)?;
+                        if !proxy::wait_for_proxy(
+                            &config.proxy_host,
+                            actual_port,
+                            std::time::Duration::from_secs(5),
+                        )
+                        .await
+                        {
+                            anyhow::bail!(
+                                "proxy daemon (PID {pid}) failed to start within 5 seconds"
+                            );
+                        }
+                        println!(
+                            "Proxy daemon started at {}:{} (PID {pid})",
+                            config.proxy_host, actual_port
+                        );
+                    }
                 } else {
                     proxy::start_proxy(config, port).await?;
                 }
@@ -233,28 +258,59 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn command_owns_terminal(command: &Option<Commands>, has_profiles: bool) -> bool {
+    matches!(command, Some(Commands::Run { .. } | Commands::Dashboard))
+        || (command.is_none() && has_profiles)
+}
+
 async fn start_proxy_background(config: &ClaudexConfig) -> Result<()> {
     let port = config.proxy_port;
     let host = config.proxy_host.clone();
 
-    // Spawn proxy in a background task
+    if proxy::is_proxy_reachable(&host, port).await {
+        return Ok(());
+    }
+
+    // Spawn a proxy owned by this interactive process. It is deliberately not
+    // registered as a daemon and will shut down with the Claude session.
     let config_clone = config.clone();
     tokio::spawn(async move {
-        if let Err(e) = proxy::start_proxy(config_clone, None).await {
+        if let Err(e) = proxy::start_embedded_proxy(config_clone, None).await {
             tracing::error!("proxy failed: {e}");
         }
     });
 
-    // Wait for it to be ready
-    let client = reqwest::Client::new();
-    let health_url = format!("http://{host}:{port}/health");
-    for _ in 0..20 {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        if client.get(&health_url).send().await.is_ok() {
-            tracing::info!("proxy is ready");
-            return Ok(());
-        }
+    if proxy::wait_for_proxy(&host, port, std::time::Duration::from_secs(5)).await {
+        tracing::info!("proxy is ready");
+        return Ok(());
     }
 
-    anyhow::bail!("proxy failed to start within 2 seconds")
+    anyhow::bail!("proxy failed to start within 5 seconds")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interactive_commands_own_stderr() {
+        let run = Some(Commands::Run {
+            profile: "test".to_string(),
+            model: None,
+            hyperlinks: false,
+            args: Vec::new(),
+        });
+        assert!(command_owns_terminal(&run, true));
+        assert!(command_owns_terminal(&Some(Commands::Dashboard), true));
+        assert!(command_owns_terminal(&None, true));
+    }
+
+    #[test]
+    fn noninteractive_commands_keep_stderr_logging() {
+        let command = Some(Commands::Profile {
+            action: ProfileAction::List,
+        });
+        assert!(!command_owns_terminal(&command, true));
+        assert!(!command_owns_terminal(&None, false));
+    }
 }

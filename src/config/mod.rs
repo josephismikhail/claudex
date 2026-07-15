@@ -2,6 +2,7 @@ pub mod cmd;
 pub mod profile;
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -116,6 +117,10 @@ pub struct ProfileConfig {
     /// 模型 slot 映射（对应 Claude Code 的 /model 切换）
     #[serde(default)]
     pub models: ProfileModels,
+    /// Route exact requested model IDs to other provider profiles.
+    /// This lets one Claude Code session mix providers across model slots.
+    #[serde(default)]
+    pub model_routes: HashMap<String, String>,
     /// 最大输出 token 数上限（可选，用于限制转发给 provider 的 max_tokens）
     #[serde(default)]
     pub max_tokens: Option<u64>,
@@ -217,6 +222,7 @@ impl Default for ProfileConfig {
             auth_type: AuthType::default(),
             oauth_provider: None,
             models: ProfileModels::default(),
+            model_routes: HashMap::new(),
             max_tokens: None,
             strip_params: StripParams::default(),
             query_params: HashMap::new(),
@@ -254,7 +260,7 @@ fn default_proxy_host() -> String {
 }
 
 fn default_log_level() -> String {
-    "debug".to_string()
+    "info".to_string()
 }
 
 fn default_provider_type() -> ProviderType {
@@ -427,7 +433,7 @@ impl ClaudexConfig {
 
         let minimal = r#"# Claudex Configuration
 # See config.example.toml for full reference:
-#   https://github.com/StringKe/claudex/blob/main/config.example.toml
+#   https://github.com/josephismikhail/claudex/blob/main/config.example.toml
 
 proxy_port = 13456
 proxy_host = "127.0.0.1"
@@ -463,7 +469,7 @@ enabled = false
         std::fs::write(&path, minimal)?;
         println!("Created default config at: {}", path.display());
         println!("Edit it to add your API keys and profiles.");
-        println!("Full example: https://github.com/StringKe/claudex/blob/main/config.example.toml");
+        println!("Full example: https://github.com/josephismikhail/claudex/blob/main/config.example.toml");
 
         let figment = Figment::from(Serialized::defaults(ClaudexConfig::default()))
             .merge(figment::providers::Toml::string(minimal));
@@ -543,7 +549,7 @@ enabled = false
                 toml::to_string_pretty(self).context("failed to serialize config to TOML")?
             }
         };
-        std::fs::write(&path, content)?;
+        write_config_atomically(&path, content.as_bytes())?;
         Ok(())
     }
 
@@ -572,6 +578,88 @@ enabled = false
             .cloned()
             .unwrap_or_else(|| model.to_string())
     }
+}
+
+/// Write configuration without ever exposing a partially truncated file.
+///
+/// Long-running interactive sessions can be interrupted at any point. Writing
+/// directly to the destination first truncates it, so a process or machine
+/// failure during serialization can destroy the user's profiles. Write and
+/// flush a sibling temporary file, then atomically replace the destination.
+fn write_config_atomically(path: &Path, content: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("config path has no parent directory")?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    let temp_path = parent.join(format!(
+        ".{file_name}.{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    let result = (|| -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .with_context(|| format!("failed to create {}", temp_path.display()))?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        replace_file(&temp_path, path)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> Result<()> {
+    std::fs::rename(source, destination).with_context(|| {
+        format!(
+            "failed to replace {} with {}",
+            destination.display(),
+            source.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    let replaced = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        return Err(std::io::Error::last_os_error()).with_context(|| {
+            format!(
+                "failed to replace {} with {}",
+                destination.display(),
+                source.display()
+            )
+        });
+    }
+    Ok(())
 }
 
 impl Default for ClaudexConfig {
@@ -613,7 +701,7 @@ mod tests {
         assert_eq!(config.claude_binary, "claude");
         assert_eq!(config.proxy_port, 13456);
         assert_eq!(config.proxy_host, "127.0.0.1");
-        assert_eq!(config.log_level, "debug");
+        assert_eq!(config.log_level, "info");
         assert!(config.profiles.is_empty());
         assert!(config.model_aliases.is_empty());
     }
@@ -684,7 +772,7 @@ mod tests {
         assert_eq!(config.profiles[0].default_model, "gpt-4");
         // Check defaults are applied
         assert_eq!(config.proxy_host, "127.0.0.1");
-        assert_eq!(config.log_level, "debug");
+        assert_eq!(config.log_level, "info");
         assert!(config.profiles[0].enabled);
     }
 
@@ -1133,5 +1221,43 @@ profiles:
                                               // profiles from project override global (figment merge replaces arrays)
         assert_eq!(config.profiles.len(), 1);
         assert_eq!(config.profiles[0].name, "project-profile");
+    }
+
+    #[test]
+    fn test_atomic_config_write_replaces_without_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "old contents").unwrap();
+
+        write_config_atomically(&path, b"new contents").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new contents");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path() != path)
+            .collect();
+        assert!(leftovers.is_empty(), "temporary file was not cleaned up");
+    }
+
+    #[test]
+    fn test_parse_model_routes() {
+        let toml = r#"
+            [[profiles]]
+            name = "ultracode"
+            base_url = "https://chat.example"
+            default_model = "chat-model"
+
+            [profiles.model_routes]
+            "claude-model" = "anthropic"
+        "#;
+        let config: ClaudexConfig = Figment::from(Serialized::defaults(ClaudexConfig::default()))
+            .merge(figment::providers::Toml::string(toml))
+            .extract()
+            .unwrap();
+        assert_eq!(
+            config.profiles[0].model_routes.get("claude-model"),
+            Some(&"anthropic".to_string())
+        );
     }
 }

@@ -264,7 +264,30 @@ async fn cmd_validate(config: &ClaudexConfig, connectivity: bool) -> Result<()> 
         }
     }
 
-    // 3. OAuth profiles must have oauth_provider
+    // 3. model_routes reference existing profiles
+    for p in &config.profiles {
+        for (model, target) in &p.model_routes {
+            if model.trim().is_empty() {
+                errors.push(format!(
+                    "profile '{}': model route key cannot be empty",
+                    p.name
+                ));
+            }
+            match config.find_profile(target) {
+                None => errors.push(format!(
+                    "profile '{}': model route '{}' points to missing profile '{}'",
+                    p.name, model, target
+                )),
+                Some(target_profile) if !target_profile.enabled => warnings.push(format!(
+                    "profile '{}': model route '{}' points to disabled profile '{}'",
+                    p.name, model, target
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+
+    // 4. OAuth profiles must have oauth_provider
     for p in &config.profiles {
         if p.auth_type == AuthType::OAuth && p.oauth_provider.is_none() {
             errors.push(format!(
@@ -274,7 +297,7 @@ async fn cmd_validate(config: &ClaudexConfig, connectivity: bool) -> Result<()> 
         }
     }
 
-    // 4. Router/context references
+    // 5. Router/context references
     if config.router.enabled
         && !config.router.profile.is_empty()
         && config.find_profile(&config.router.profile).is_none()
@@ -305,7 +328,7 @@ async fn cmd_validate(config: &ClaudexConfig, connectivity: bool) -> Result<()> 
         ));
     }
 
-    // 5. base_url format
+    // 6. base_url format
     for p in &config.profiles {
         if !p.base_url.starts_with("http://") && !p.base_url.starts_with("https://") {
             errors.push(format!(

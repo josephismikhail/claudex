@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
-use crate::config::ProfileConfig;
+use crate::config::{ClaudexConfig, ProfileConfig};
 use crate::oauth::AuthType;
 use crate::proxy::ProxyState;
 use crate::router::classifier;
@@ -60,13 +60,30 @@ pub async fn handle_messages(
     };
 
     // --- Smart Routing: resolve "auto" profile ---
-    let resolved_profile_name = if profile_name == "auto" {
+    let initial_profile_name = if profile_name == "auto" {
         resolve_auto_profile(&state, &body_value).await
     } else {
         profile_name.clone()
     };
 
     let config = state.config.read().await;
+
+    let resolved_profile_name =
+        match resolve_model_route(&config, &initial_profile_name, &body_value) {
+            Ok(name) => name,
+            Err(error) => {
+                tracing::error!(profile = %initial_profile_name, %error, "invalid model route");
+                return (StatusCode::SERVICE_UNAVAILABLE, error).into_response();
+            }
+        };
+    if resolved_profile_name != initial_profile_name {
+        tracing::info!(
+            profile = %initial_profile_name,
+            model = %body_value.get("model").and_then(|value| value.as_str()).unwrap_or("-"),
+            target_profile = %resolved_profile_name,
+            "model route resolved"
+        );
+    }
 
     let mut profile = match config.find_profile(&resolved_profile_name) {
         Some(p) => p.clone(),
@@ -221,6 +238,30 @@ pub async fn handle_messages(
     }
 }
 
+fn resolve_model_route(
+    config: &ClaudexConfig,
+    profile_name: &str,
+    body: &Value,
+) -> std::result::Result<String, String> {
+    let Some(profile) = config.find_profile(profile_name) else {
+        return Ok(profile_name.to_string());
+    };
+    let Some(model) = body.get("model").and_then(Value::as_str) else {
+        return Ok(profile_name.to_string());
+    };
+    let Some(target) = profile.model_routes.get(model) else {
+        return Ok(profile_name.to_string());
+    };
+
+    if config.find_profile(target).is_none() {
+        return Err(format!(
+            "profile '{}': model route '{}' points to missing profile '{}'",
+            profile.name, model, target
+        ));
+    }
+    Ok(target.clone())
+}
+
 /// Resolve "auto" profile via smart router
 async fn resolve_auto_profile(state: &ProxyState, body: &Value) -> String {
     let config = state.config.read().await;
@@ -372,8 +413,13 @@ async fn try_forward(
         "forwarding request"
     );
 
-    // Debug: log translated request body (truncated)
-    if tracing::enabled!(tracing::Level::DEBUG) {
+    // Request bodies can contain prompts, tool schemas, and large chunks of
+    // session state. Logging them by default both leaks sensitive content and
+    // creates noisy, fast-growing logs during long sessions. Keep the old
+    // diagnostic available only behind an explicit opt-in.
+    if tracing::enabled!(tracing::Level::DEBUG)
+        && std::env::var_os("CLAUDEX_LOG_REQUEST_BODIES").is_some()
+    {
         let body_str = serde_json::to_string(&translated.body).unwrap_or_default();
         let preview = if body_str.len() > 2000 {
             format!(
@@ -597,6 +643,72 @@ mod tests {
     #[test]
     fn test_truncate_zero_length() {
         assert_eq!(truncate_at_char_boundary("hello", 0), "");
+    }
+
+    #[test]
+    fn test_model_route_selects_another_provider_profile() {
+        let source = ProfileConfig {
+            name: "ultracode".to_string(),
+            base_url: "https://chat.example".to_string(),
+            default_model: "chat-model".to_string(),
+            model_routes: std::collections::HashMap::from([(
+                "claude-model".to_string(),
+                "anthropic".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let target = ProfileConfig {
+            name: "anthropic".to_string(),
+            base_url: "https://anthropic.example".to_string(),
+            default_model: "claude-model".to_string(),
+            ..Default::default()
+        };
+        let config = ClaudexConfig {
+            profiles: vec![source, target],
+            ..Default::default()
+        };
+
+        let routed = resolve_model_route(
+            &config,
+            "ultracode",
+            &serde_json::json!({"model": "claude-model"}),
+        )
+        .unwrap();
+        assert_eq!(routed, "anthropic");
+
+        let unchanged = resolve_model_route(
+            &config,
+            "ultracode",
+            &serde_json::json!({"model": "chat-model"}),
+        )
+        .unwrap();
+        assert_eq!(unchanged, "ultracode");
+    }
+
+    #[test]
+    fn test_model_route_rejects_missing_target() {
+        let source = ProfileConfig {
+            name: "ultracode".to_string(),
+            base_url: "https://chat.example".to_string(),
+            default_model: "chat-model".to_string(),
+            model_routes: std::collections::HashMap::from([(
+                "claude-model".to_string(),
+                "missing".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let config = ClaudexConfig {
+            profiles: vec![source],
+            ..Default::default()
+        };
+
+        let error = resolve_model_route(
+            &config,
+            "ultracode",
+            &serde_json::json!({"model": "claude-model"}),
+        )
+        .unwrap_err();
+        assert!(error.contains("missing profile 'missing'"));
     }
 
     // ── extract_and_store_context ──

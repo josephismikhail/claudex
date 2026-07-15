@@ -45,6 +45,9 @@ claude = "claude-sonnet-4-20250514"
 #   sonnet = "balanced-model"                  # maps Claude sonnet slot
 #   opus   = "powerful-model"                  # maps Claude opus slot
 #
+#   [profiles.model_routes]                    # exact model ID -> another configured profile
+#   "claude-opus-model" = "anthropic"          # mix providers inside one launched profile
+#
 #   [profiles.custom_headers]                  # extra HTTP headers per request
 #   X-Custom-Header = "value"
 #
