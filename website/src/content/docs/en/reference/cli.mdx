@@ -15,7 +15,7 @@ claudex [OPTIONS] [COMMAND]
 | `--version` | Print version |
 | `--help` | Print help |
 
-When run without a command, Claudex launches the TUI dashboard if profiles are configured, or shows a welcome message if no profiles exist.
+When run without a command, Claudex immediately launches the sole enabled profile. With multiple enabled profiles it opens the TUI picker; with no profiles it shows the welcome message. Disabled profiles do not force a selection.
 
 ## Commands
 

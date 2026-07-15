@@ -25,6 +25,7 @@ pub struct RawCredential {
     pub refresh_token: Option<String>,
     pub expires_at: Option<i64>,
     pub token_type: Option<String>,
+    pub scopes: Option<Vec<String>>,
     pub extra: Option<serde_json::Value>,
     pub source: CredentialSource,
 }
@@ -36,7 +37,7 @@ impl RawCredential {
             refresh_token: self.refresh_token,
             expires_at: self.expires_at,
             token_type: self.token_type,
-            scopes: None,
+            scopes: self.scopes,
             extra: self.extra,
         }
     }
@@ -88,10 +89,15 @@ pub fn delete_keyring(profile_name: &str) -> Result<()> {
 pub fn read_claude_credentials() -> Result<RawCredential> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
     let cred_path = home.join(".claude").join(".credentials.json");
-    let content = std::fs::read_to_string(&cred_path)
+    read_claude_credentials_at(&cred_path)
+}
+
+fn read_claude_credentials_at(cred_path: &std::path::Path) -> Result<RawCredential> {
+    let content = std::fs::read_to_string(cred_path)
         .with_context(|| format!("cannot read {}", cred_path.display()))?;
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
     let json: serde_json::Value =
-        serde_json::from_str(&content).context("invalid JSON in credentials file")?;
+        serde_json::from_str(content).context("invalid JSON in credentials file")?;
 
     let oauth_obj = json
         .get("claudeAiOauth")
@@ -121,9 +127,25 @@ pub fn read_claude_credentials() -> Result<RawCredential> {
             .map(|s| s.to_string()),
         expires_at,
         token_type: Some("Bearer".to_string()),
+        scopes: parse_scopes(oauth_obj.get("scopes")),
         extra: None,
-        source: CredentialSource::ExternalCli("~/.claude/.credentials.json".to_string()),
+        source: CredentialSource::ExternalCli(cred_path.display().to_string()),
     })
+}
+
+fn parse_scopes(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+    match value {
+        Some(serde_json::Value::Array(values)) => Some(
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                .collect(),
+        ),
+        Some(serde_json::Value::String(value)) => {
+            Some(value.split_whitespace().map(ToOwned::to_owned).collect())
+        }
+        _ => None,
+    }
 }
 
 /// 读取 Codex CLI 的 credentials（~/.codex/auth.json）
@@ -184,6 +206,7 @@ pub fn read_codex_credentials() -> Result<RawCredential> {
         refresh_token,
         expires_at,
         token_type: Some("Bearer".to_string()),
+        scopes: None,
         extra: Some(extra),
         source: CredentialSource::ExternalCli("~/.codex/auth.json".to_string()),
     })
@@ -217,6 +240,7 @@ pub fn read_copilot_config_with_host(enterprise_host: Option<&str>) -> Result<Ra
                                 refresh_token: None,
                                 expires_at: None,
                                 token_type: Some("token".to_string()),
+                                scopes: None,
                                 extra: Some(serde_json::json!({"source_key": key})),
                                 source: CredentialSource::CopilotConfig,
                             });
@@ -240,6 +264,7 @@ pub fn read_copilot_config_with_host(enterprise_host: Option<&str>) -> Result<Ra
                                 refresh_token: None,
                                 expires_at: None,
                                 token_type: Some("token".to_string()),
+                                scopes: None,
                                 extra: None,
                                 source: CredentialSource::CopilotConfig,
                             });
@@ -298,6 +323,7 @@ fn read_cli_credentials(
                             .map(|s| s.to_string()),
                         expires_at: json.get("expires_at").and_then(|v| v.as_i64()),
                         token_type: Some("Bearer".to_string()),
+                        scopes: None,
                         extra: None,
                         source: CredentialSource::ExternalCli(path.display().to_string()),
                     });
@@ -318,32 +344,40 @@ pub fn load_credential_chain(provider: &OAuthProvider) -> Result<RawCredential> 
 
     match provider {
         OAuthProvider::Claude => {
-            // env ANTHROPIC_API_KEY > ~/.claude/.credentials.json > keyring
-            if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-                if !key.is_empty() {
+            // A setup-token value is already long-lived and inference-scoped.
+            // API keys belong in an api-key profile and must not be mislabeled
+            // as OAuth Bearer credentials.
+            if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
+                if !token.is_empty() {
                     return Ok(RawCredential {
-                        access_token: key,
+                        access_token: token,
                         refresh_token: None,
                         expires_at: None,
                         token_type: Some("Bearer".to_string()),
+                        scopes: None,
                         extra: None,
-                        source: CredentialSource::EnvVar("ANTHROPIC_API_KEY".to_string()),
+                        source: CredentialSource::EnvVar("CLAUDE_CODE_OAUTH_TOKEN".to_string()),
                     });
                 }
             }
             read_claude_credentials()
         }
         OAuthProvider::Chatgpt => {
-            // env CODEX_API_KEY > ~/.codex/auth.json > keyring
-            if let Ok(key) = std::env::var("CODEX_API_KEY") {
-                if !key.is_empty() {
+            // CODEX_ACCESS_TOKEN is the current Codex CLI automation variable;
+            // keep CODEX_API_KEY as a compatibility fallback.
+            for var in &["CODEX_ACCESS_TOKEN", "CODEX_API_KEY"] {
+                if let Ok(token) = std::env::var(var) {
+                    if token.is_empty() {
+                        continue;
+                    }
                     return Ok(RawCredential {
-                        access_token: key,
+                        access_token: token,
                         refresh_token: None,
                         expires_at: None,
                         token_type: Some("Bearer".to_string()),
+                        scopes: None,
                         extra: None,
-                        source: CredentialSource::EnvVar("CODEX_API_KEY".to_string()),
+                        source: CredentialSource::EnvVar((*var).to_string()),
                     });
                 }
             }
@@ -358,6 +392,7 @@ pub fn load_credential_chain(provider: &OAuthProvider) -> Result<RawCredential> 
                         refresh_token: None,
                         expires_at: None,
                         token_type: Some("Bearer".to_string()),
+                        scopes: None,
                         extra: None,
                         source: CredentialSource::EnvVar("GEMINI_API_KEY".to_string()),
                     });
@@ -374,6 +409,7 @@ pub fn load_credential_chain(provider: &OAuthProvider) -> Result<RawCredential> 
                         refresh_token: None,
                         expires_at: None,
                         token_type: Some("Bearer".to_string()),
+                        scopes: None,
                         extra: None,
                         source: CredentialSource::EnvVar("KIMI_API_KEY".to_string()),
                     });
@@ -390,6 +426,7 @@ pub fn load_credential_chain(provider: &OAuthProvider) -> Result<RawCredential> 
                         refresh_token: None,
                         expires_at: None,
                         token_type: Some("token".to_string()),
+                        scopes: None,
                         extra: None,
                         source: CredentialSource::EnvVar("GITHUB_TOKEN".to_string()),
                     });
@@ -407,6 +444,7 @@ pub fn load_credential_chain(provider: &OAuthProvider) -> Result<RawCredential> 
                             refresh_token: None,
                             expires_at: None,
                             token_type: Some("Bearer".to_string()),
+                            scopes: None,
                             extra: None,
                             source: CredentialSource::EnvVar(var.to_string()),
                         });
@@ -483,7 +521,46 @@ pub fn extract_account_id(token_response: &serde_json::Value) -> Option<String> 
     None
 }
 
-// ── Codex credentials atomic write ───────────────────────────────────────
+// ── External credential persistence ──────────────────────────────────────
+
+/// Persist a rotated Claude access/refresh token without discarding account
+/// metadata that Claude Code owns in the same credentials file.
+pub fn write_claude_credentials_atomic(path: &std::path::Path, token: &OAuthToken) -> Result<()> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+    let mut json: serde_json::Value = serde_json::from_str(content)
+        .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    let oauth = json
+        .get_mut("claudeAiOauth")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("missing 'claudeAiOauth' object in Claude credentials")?;
+
+    oauth.insert(
+        "accessToken".to_string(),
+        serde_json::Value::String(token.access_token.clone()),
+    );
+    if let Some(refresh_token) = &token.refresh_token {
+        oauth.insert(
+            "refreshToken".to_string(),
+            serde_json::Value::String(refresh_token.clone()),
+        );
+    }
+    if let Some(expires_at) = token.expires_at {
+        oauth.insert(
+            "expiresAt".to_string(),
+            serde_json::Value::Number(expires_at.into()),
+        );
+    }
+    if let Some(scopes) = &token.scopes {
+        oauth.insert("scopes".to_string(), serde_json::json!(scopes));
+    }
+
+    let encoded = serde_json::to_vec_pretty(&json)?;
+    crate::config::write_file_atomically(path, &encoded)?;
+    tracing::info!(path = %path.display(), "updated Claude OAuth credentials atomically");
+    Ok(())
+}
 
 /// 将刷新后的 token 原子写入 ~/.codex/auth.json
 pub fn write_codex_credentials_atomic(token: &OAuthToken) -> Result<()> {
@@ -493,28 +570,36 @@ pub fn write_codex_credentials_atomic(token: &OAuthToken) -> Result<()> {
 
     // 读取现有文件保留 auth_mode 等字段
     let mut json: serde_json::Value = if let Ok(content) = std::fs::read_to_string(&cred_path) {
-        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+        serde_json::from_str(&content)
+            .with_context(|| format!("invalid JSON in {}", cred_path.display()))?
     } else {
         serde_json::json!({})
     };
 
-    if json.get("tokens").is_none() {
+    if !json.get("tokens").is_some_and(serde_json::Value::is_object) {
         json["tokens"] = serde_json::json!({});
     }
 
-    let tokens = json.get_mut("tokens").unwrap();
-    tokens["access_token"] = serde_json::json!(token.access_token);
+    let tokens = json
+        .get_mut("tokens")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("Codex credentials 'tokens' value must be an object")?;
+    tokens.insert(
+        "access_token".to_string(),
+        serde_json::Value::String(token.access_token.clone()),
+    );
     if let Some(ref rt) = token.refresh_token {
-        tokens["refresh_token"] = serde_json::json!(rt);
+        tokens.insert(
+            "refresh_token".to_string(),
+            serde_json::Value::String(rt.clone()),
+        );
     }
 
     json["last_refresh"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
 
-    // 原子写入: tmp 文件 + rename
     std::fs::create_dir_all(&codex_dir)?;
-    let tmp_path = cred_path.with_extension("tmp");
-    std::fs::write(&tmp_path, serde_json::to_string_pretty(&json)?)?;
-    std::fs::rename(&tmp_path, &cred_path)?;
+    let encoded = serde_json::to_vec_pretty(&json)?;
+    crate::config::write_file_atomically(&cred_path, &encoded)?;
 
     tracing::info!("wrote refreshed token to {}", cred_path.display());
     Ok(())
@@ -585,17 +670,17 @@ mod tests {
     #[test]
     fn test_credential_chain_env_var() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::set_var("ANTHROPIC_API_KEY", "test-key-123");
+        std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "test-token-123");
         let cred = load_credential_chain(&OAuthProvider::Claude).unwrap();
-        assert_eq!(cred.access_token, "test-key-123");
+        assert_eq!(cred.access_token, "test-token-123");
         assert!(matches!(cred.source, CredentialSource::EnvVar(_)));
-        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
     }
 
     #[test]
     fn test_credential_chain_empty_env_skipped() {
         let _lock = ENV_LOCK.lock().unwrap();
-        std::env::set_var("ANTHROPIC_API_KEY", "");
+        std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "");
         // 空值应被跳过，如果文件也不存在则报错
         let result = load_credential_chain(&OAuthProvider::Claude);
         // 在 CI 中文件不存在，应该报错
@@ -603,7 +688,7 @@ mod tests {
         if let Ok(cred) = &result {
             assert!(!cred.access_token.is_empty());
         }
-        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
     }
 
     #[test]
@@ -621,6 +706,7 @@ mod tests {
             refresh_token: Some("ref".to_string()),
             expires_at: Some(1700000000000),
             token_type: Some("Bearer".to_string()),
+            scopes: Some(vec!["user:inference".to_string()]),
             extra: None,
             source: CredentialSource::EnvVar("TEST".to_string()),
         };
@@ -628,6 +714,62 @@ mod tests {
         assert_eq!(token.access_token, "tok");
         assert_eq!(token.refresh_token.as_deref(), Some("ref"));
         assert_eq!(token.expires_at, Some(1700000000000));
+        assert_eq!(token.scopes, Some(vec!["user:inference".to_string()]));
+    }
+
+    #[test]
+    fn reads_and_atomically_updates_claude_credentials_without_losing_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".credentials.json");
+        std::fs::write(
+            &path,
+            format!(
+                "\u{feff}{}",
+                serde_json::json!({
+                    "claudeAiOauth": {
+                        "accessToken": "old-access",
+                        "refreshToken": "old-refresh",
+                        "expiresAt": "1700000000000",
+                        "scopes": "user:profile user:inference",
+                        "subscriptionType": "max"
+                    },
+                    "account": {"email": "preserve@example.test"}
+                })
+            ),
+        )
+        .unwrap();
+
+        let credential = read_claude_credentials_at(&path).unwrap();
+        assert_eq!(credential.access_token, "old-access");
+        assert_eq!(credential.refresh_token.as_deref(), Some("old-refresh"));
+        assert_eq!(credential.expires_at, Some(1_700_000_000_000));
+        assert_eq!(
+            credential.scopes,
+            Some(vec![
+                "user:profile".to_string(),
+                "user:inference".to_string()
+            ])
+        );
+
+        write_claude_credentials_atomic(
+            &path,
+            &OAuthToken {
+                access_token: "new-access".to_string(),
+                refresh_token: Some("new-refresh".to_string()),
+                expires_at: Some(1_800_000_000_000),
+                token_type: Some("Bearer".to_string()),
+                scopes: Some(vec!["user:inference".to_string()]),
+                extra: None,
+            },
+        )
+        .unwrap();
+
+        let updated: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(updated["claudeAiOauth"]["accessToken"], "new-access");
+        assert_eq!(updated["claudeAiOauth"]["refreshToken"], "new-refresh");
+        assert_eq!(updated["claudeAiOauth"]["subscriptionType"], "max");
+        assert_eq!(updated["account"]["email"], "preserve@example.test");
     }
 
     #[test]

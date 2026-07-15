@@ -75,25 +75,8 @@ async fn main() -> Result<()> {
             hyperlinks,
             args,
         }) => {
-            // Ensure proxy is running
-            if !proxy::is_proxy_reachable(&config.proxy_host, config.proxy_port).await {
-                tracing::info!("proxy not running, starting in background...");
-                start_proxy_background(&config).await?;
-            }
-
-            let profile = config
-                .find_profile(&profile_name)
-                .ok_or_else(|| anyhow::anyhow!("profile '{}' not found", profile_name))?
-                .clone();
-
-            process::launch::launch_claude(&config, &profile, model.as_deref(), &args, hyperlinks)?;
-
-            // Claude 退出后，输出日志文件路径
-            if let Some(log_path) = proxy::proxy_log_path() {
-                if log_path.exists() {
-                    eprintln!("\nClaudex proxy log: {}", log_path.display());
-                }
-            }
+            run_profile_session(&config, &profile_name, model.as_deref(), &args, hyperlinks)
+                .await?;
         }
 
         Some(Commands::Profile { action }) => match action {
@@ -220,30 +203,86 @@ async fn main() -> Result<()> {
             }
         },
 
-        None => {
-            // Default: launch TUI if profiles exist, else show help
-            if config.profiles.is_empty() {
-                println!("Welcome to Claudex!");
-                println!();
-                println!("Get started:");
-                println!("  1. Create config: claudex config");
-                println!(
-                    "  2. Add a profile: edit {:?}",
-                    ClaudexConfig::config_path()?
-                );
-                println!("  3. Run claude:    claudex run <profile>");
-                println!();
-                println!("Use --help for more options.");
-            } else {
+        None => match default_action(&config) {
+            DefaultAction::Welcome => print_welcome()?,
+            DefaultAction::AutoRun(profile_name) => {
+                run_profile_session(&config, &profile_name, None, &[], false).await?;
+            }
+            DefaultAction::Dashboard => {
                 let config_arc = std::sync::Arc::new(tokio::sync::RwLock::new(config));
                 let metrics_store = proxy::metrics::MetricsStore::new();
                 let health =
                     std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
                 tui::run_tui(config_arc, metrics_store, health).await?;
             }
-        }
+        },
     }
 
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DefaultAction {
+    Welcome,
+    AutoRun(String),
+    Dashboard,
+}
+
+fn default_action(config: &ClaudexConfig) -> DefaultAction {
+    if config.profiles.is_empty() {
+        return DefaultAction::Welcome;
+    }
+
+    let enabled = config.enabled_profiles();
+    if enabled.len() == 1 {
+        DefaultAction::AutoRun(enabled[0].name.clone())
+    } else {
+        DefaultAction::Dashboard
+    }
+}
+
+fn print_welcome() -> Result<()> {
+    println!("Welcome to Claudex!");
+    println!();
+    println!("Get started:");
+    println!("  1. Create config: claudex config");
+    println!(
+        "  2. Add a profile: edit {:?}",
+        ClaudexConfig::config_path()?
+    );
+    println!("  3. Run claude:    claudex run <profile>");
+    println!();
+    println!("Use --help for more options.");
+    Ok(())
+}
+
+async fn run_profile_session(
+    config: &ClaudexConfig,
+    profile_name: &str,
+    model: Option<&str>,
+    args: &[String],
+    hyperlinks: bool,
+) -> Result<()> {
+    let profile = config
+        .find_profile(profile_name)
+        .ok_or_else(|| anyhow::anyhow!("profile '{}' not found", profile_name))?
+        .clone();
+    if !profile.enabled {
+        anyhow::bail!("profile '{}' is disabled", profile_name);
+    }
+
+    if !proxy::is_proxy_reachable(&config.proxy_host, config.proxy_port).await {
+        tracing::info!("proxy not running, starting in background...");
+        start_proxy_background(config).await?;
+    }
+
+    process::launch::launch_claude(config, &profile, model, args, hyperlinks)?;
+
+    if let Some(log_path) = proxy::proxy_log_path() {
+        if log_path.exists() {
+            eprintln!("\nClaudex proxy log: {}", log_path.display());
+        }
+    }
     Ok(())
 }
 
@@ -301,5 +340,78 @@ mod tests {
         });
         assert!(!command_owns_terminal(&command, true));
         assert!(!command_owns_terminal(&None, false));
+    }
+
+    #[test]
+    fn bare_command_welcomes_when_no_profiles_exist() {
+        assert_eq!(
+            default_action(&ClaudexConfig::default()),
+            DefaultAction::Welcome
+        );
+    }
+
+    #[test]
+    fn bare_command_runs_the_only_enabled_profile() {
+        let config = ClaudexConfig {
+            profiles: vec![config::ProfileConfig {
+                name: "only".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            default_action(&config),
+            DefaultAction::AutoRun("only".to_string())
+        );
+    }
+
+    #[test]
+    fn disabled_profiles_do_not_force_account_selection() {
+        let config = ClaudexConfig {
+            profiles: vec![
+                config::ProfileConfig {
+                    name: "only".to_string(),
+                    ..Default::default()
+                },
+                config::ProfileConfig {
+                    name: "old".to_string(),
+                    enabled: false,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            default_action(&config),
+            DefaultAction::AutoRun("only".to_string())
+        );
+    }
+
+    #[test]
+    fn bare_command_opens_dashboard_for_multiple_or_only_disabled_profiles() {
+        let multiple = ClaudexConfig {
+            profiles: vec![
+                config::ProfileConfig {
+                    name: "one".to_string(),
+                    ..Default::default()
+                },
+                config::ProfileConfig {
+                    name: "two".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(default_action(&multiple), DefaultAction::Dashboard);
+
+        let disabled = ClaudexConfig {
+            profiles: vec![config::ProfileConfig {
+                name: "off".to_string(),
+                enabled: false,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(default_action(&disabled), DefaultAction::Dashboard);
     }
 }

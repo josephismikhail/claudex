@@ -13,6 +13,17 @@ pub const CHATGPT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const CHATGPT_ISSUER: &str = "https://auth.openai.com";
 pub const CHATGPT_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 
+pub const CLAUDE_OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+pub const CLAUDE_OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+pub const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
+pub const CLAUDE_OAUTH_DEFAULT_SCOPES: &[&str] = &[
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+];
+
 pub const GITHUB_COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 pub const GITHUB_COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
@@ -39,6 +50,67 @@ impl std::fmt::Display for RefreshError {
 }
 
 impl std::error::Error for RefreshError {}
+
+// ── Claude Subscription Token Refresh ───────────────────────────────────
+
+/// Refresh the short-lived access token stored by Claude Code. Claude may
+/// rotate the refresh token, so callers must persist the returned token.
+pub async fn refresh_claude_token(
+    client: &reqwest::Client,
+    refresh_token: &str,
+    scopes: Option<&[String]>,
+) -> Result<OAuthToken> {
+    refresh_claude_token_at(client, CLAUDE_OAUTH_TOKEN_URL, refresh_token, scopes).await
+}
+
+async fn refresh_claude_token_at(
+    client: &reqwest::Client,
+    token_url: &str,
+    refresh_token: &str,
+    scopes: Option<&[String]>,
+) -> Result<OAuthToken> {
+    let scope = scopes
+        .filter(|scopes| !scopes.is_empty())
+        .map(|scopes| scopes.join(" "))
+        .unwrap_or_else(|| CLAUDE_OAUTH_DEFAULT_SCOPES.join(" "));
+    let response = client
+        .post(token_url)
+        .header("Content-Type", "application/json")
+        .header("anthropic-beta", CLAUDE_OAUTH_BETA)
+        .json(&serde_json::json!({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": CLAUDE_OAUTH_CLIENT_ID,
+            "scope": scope,
+        }))
+        .send()
+        .await
+        .context("Claude OAuth token refresh request failed")?;
+
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .context("invalid JSON from Claude OAuth token refresh")?;
+    if !status.is_success() {
+        let error = body
+            .get("error_description")
+            .or_else(|| body.get("error"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown OAuth error");
+        anyhow::bail!("Claude OAuth token refresh failed (HTTP {status}): {error}");
+    }
+
+    let mut token = OAuthToken::from_token_response(&body)
+        .context("failed to parse Claude OAuth refresh response")?;
+    if token.refresh_token.is_none() {
+        token.refresh_token = Some(refresh_token.to_string());
+    }
+    if token.scopes.is_none() {
+        token.scopes = scopes.map(ToOwned::to_owned);
+    }
+    Ok(token)
+}
 
 /// 使用 refresh_token 刷新 ChatGPT token
 pub async fn refresh_chatgpt_token(
@@ -398,6 +470,62 @@ fn encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn refresh_claude_token_uses_official_oauth_contract() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::extract::State;
+        use axum::http::HeaderMap;
+        use axum::routing::post;
+        use axum::{Json, Router};
+
+        type Capture = Arc<Mutex<Option<(HeaderMap, serde_json::Value)>>>;
+        let capture: Capture = Arc::new(Mutex::new(None));
+        let app = Router::new()
+            .route(
+                "/v1/oauth/token",
+                post(
+                    |State(capture): State<Capture>,
+                     headers: HeaderMap,
+                     Json(body): Json<serde_json::Value>| async move {
+                        *capture.lock().unwrap() = Some((headers, body));
+                        Json(serde_json::json!({
+                            "access_token": "new-access",
+                            "refresh_token": "new-refresh",
+                            "expires_in": 3600,
+                            "scope": ["user:inference"]
+                        }))
+                    },
+                ),
+            )
+            .with_state(capture.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let token = refresh_claude_token_at(
+            &reqwest::Client::new(),
+            &format!("http://{address}/v1/oauth/token"),
+            "old-refresh",
+            Some(&["user:inference".to_string()]),
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(token.access_token, "new-access");
+        assert_eq!(token.refresh_token.as_deref(), Some("new-refresh"));
+        assert_eq!(token.scopes, Some(vec!["user:inference".to_string()]));
+        let (headers, body) = capture.lock().unwrap().take().unwrap();
+        assert_eq!(headers["anthropic-beta"], CLAUDE_OAUTH_BETA);
+        assert_eq!(body["grant_type"], "refresh_token");
+        assert_eq!(body["refresh_token"], "old-refresh");
+        assert_eq!(body["client_id"], CLAUDE_OAUTH_CLIENT_ID);
+        assert_eq!(body["scope"], "user:inference");
+    }
 
     // ── encode ────────────────────────────────────────────────
 

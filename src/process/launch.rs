@@ -34,23 +34,13 @@ pub fn launch_claude(
     // 不设 CLAUDE_CONFIG_DIR — 使用全局 ~/.claude，保留用户已有认证和设置。
     // Profile 差异化完全通过环境变量实现。
 
-    let is_claude_subscription = profile.auth_type == AuthType::OAuth
-        && profile.oauth_provider == Some(OAuthProvider::Claude);
-
-    if is_claude_subscription {
-        // Claude subscription：Claude Code 直接使用自身 OAuth
-        // 不设 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY
-        if model != profile.default_model {
-            cmd.env("ANTHROPIC_MODEL", &model);
-        }
-    } else {
-        // 标准代理流程（Gateway 模式）
-        // 用 ANTHROPIC_AUTH_TOKEN（发 Authorization: Bearer header）而非 ANTHROPIC_API_KEY（发 X-Api-Key header）
-        // 避免与 claude.ai OAuth token 产生 "Auth conflict"
-        cmd.env("ANTHROPIC_BASE_URL", &proxy_base)
-            .env("ANTHROPIC_AUTH_TOKEN", "claudex-passthrough")
-            .env("ANTHROPIC_MODEL", &model);
-    }
+    // Every profile goes through the local gateway, including Claude
+    // subscriptions. This keeps model_routes active when /model switches
+    // between providers in the same Claude Code session. The placeholder is
+    // accepted only by the loopback proxy and is never forwarded upstream.
+    cmd.env("ANTHROPIC_BASE_URL", &proxy_base)
+        .env("ANTHROPIC_AUTH_TOKEN", "claudex-passthrough")
+        .env("ANTHROPIC_MODEL", &model);
 
     if !profile.custom_headers.is_empty() {
         let headers: Vec<String> = profile
@@ -70,6 +60,33 @@ pub fn launch_claude(
     }
     if let Some(ref o) = profile.models.opus {
         cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", config.resolve_model(o));
+    }
+
+    // Claude Code cannot infer gateway model capabilities from arbitrary GPT
+    // IDs. Mark ChatGPT subscription slots as effort-capable so /effort and
+    // ultracode remain available; the proxy maps the selected level to the
+    // Responses API's reasoning.effort field.
+    let is_chatgpt_subscription = profile.auth_type == AuthType::OAuth
+        && profile.oauth_provider.as_ref().is_some_and(|provider| {
+            matches!(
+                provider.normalize(),
+                OAuthProvider::Chatgpt | OAuthProvider::Openai
+            )
+        });
+    if is_chatgpt_subscription {
+        const CAPABILITIES: &str = "effort,xhigh_effort,max_effort";
+        cmd.env(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        )
+        .env(
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        )
+        .env(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        );
     }
 
     for (k, v) in &profile.extra_env {
@@ -264,7 +281,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo ARGS=%*\r\n)\r\n",
+                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo CAPABILITIES=%ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo ARGS=%*\r\n)\r\n",
                 output.display()
             ),
         )
@@ -284,6 +301,8 @@ mod tests {
             provider_type: crate::config::ProviderType::OpenAICompatible,
             base_url: "https://example.invalid/v1".to_string(),
             default_model: "test-model".to_string(),
+            auth_type: AuthType::OAuth,
+            oauth_provider: Some(OAuthProvider::Chatgpt),
             models: crate::config::ProfileModels {
                 haiku: Some("fast".to_string()),
                 ..Default::default()
@@ -312,6 +331,7 @@ mod tests {
         assert!(child_output.contains("TOKEN=claudex-passthrough"));
         assert!(child_output.contains("MODEL=test-model"));
         assert!(child_output.contains("HAIKU=provider-fast-model"));
+        assert!(child_output.contains("CAPABILITIES=effort,xhigh_effort,max_effort"));
         assert!(child_output.contains("PRIVATE=1"));
         assert!(child_output.contains("TELEMETRY=1"));
         assert!(child_output.contains("UPDATES=1"));

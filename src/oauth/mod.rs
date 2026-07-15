@@ -115,10 +115,18 @@ impl OAuthToken {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let scopes = json
-            .get("scope")
-            .and_then(|v| v.as_str())
-            .map(|s| s.split_whitespace().map(|s| s.to_string()).collect());
+        let scopes = match json.get("scope").or_else(|| json.get("scopes")) {
+            Some(serde_json::Value::String(value)) => {
+                Some(value.split_whitespace().map(ToOwned::to_owned).collect())
+            }
+            Some(serde_json::Value::Array(values)) => Some(
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                    .collect(),
+            ),
+            _ => None,
+        };
 
         Some(Self {
             access_token,
@@ -222,6 +230,22 @@ mod tests {
         assert_eq!(token.access_token, "abc123");
         assert!(token.refresh_token.is_none());
         assert!(token.expires_at.is_none());
+    }
+
+    #[test]
+    fn test_parse_token_response_array_scopes() {
+        let token = OAuthToken::from_token_response(&serde_json::json!({
+            "access_token": "abc123",
+            "scopes": ["user:profile", "user:inference"]
+        }))
+        .unwrap();
+        assert_eq!(
+            token.scopes,
+            Some(vec![
+                "user:profile".to_string(),
+                "user:inference".to_string()
+            ])
+        );
     }
 
     #[test]

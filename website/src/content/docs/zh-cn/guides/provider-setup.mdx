@@ -341,7 +341,7 @@ OAuth 认证允许你使用现有的提供商订阅（ChatGPT Plus、Claude Max 
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -353,7 +353,7 @@ opus = "claude-opus-4-20250514"
 ```
 
 <Aside type="note">
-  Claude OAuth profile 使用特殊的网关认证模式。Claudex 跳过代理，让 Claude Code 直接使用自身的 OAuth。无需额外的 `claudex auth login` 步骤。
+  Claude OAuth profiles use the local gateway, which reuses and refreshes Claude Code's credentials. Authenticate once with `claude auth login`; no separate Claudex browser flow is required.
 </Aside>
 
 ### ChatGPT Plus / Codex CLI

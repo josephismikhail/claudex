@@ -125,7 +125,7 @@ For providers using the OpenAI Responses API (e.g., ChatGPT/Codex subscriptions)
 name = "codex-sub"
 provider_type = "OpenAIResponses"
 base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.6"
 auth_type = "oauth"
 oauth_provider = "openai"
 ```
@@ -221,7 +221,7 @@ Instead of API keys, you can authenticate with your existing provider subscripti
 name = "codex-sub"
 provider_type = "OpenAIResponses"
 base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.6"
 auth_type = "oauth"
 oauth_provider = "openai"
 ```
@@ -254,9 +254,9 @@ For details on each provider's OAuth flow, see [OAuth Subscriptions](/en/feature
 
 ### Gateway Auth Mode
 
-When using OAuth profiles, Claudex sets `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) when launching Claude Code. This prevents conflicts with Claude Code's own subscription login mechanism, which uses `ANTHROPIC_API_KEY` internally.
+When using OAuth profiles, Claudex points Claude Code at its loopback gateway and sets a local placeholder `ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`). The placeholder never leaves the machine; the gateway replaces it with the selected profile's provider credential.
 
-The proxy automatically refreshes OAuth tokens before they expire. You can also manually refresh with:
+The gateway automatically refreshes OAuth tokens before they expire. You can also manually refresh with:
 
 ```bash
 claudex auth refresh openai

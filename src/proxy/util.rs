@@ -29,14 +29,12 @@ pub fn format_sse(event: &str, data: &Value) -> String {
     )
 }
 
-/// API key 预览（显示首尾各 4 字符）
+/// API key status for logs. Never include credential fragments.
 pub fn format_key_preview(key: &str) -> String {
     if key.is_empty() {
         "(empty)".to_string()
-    } else if key.len() > 8 {
-        format!("{}...{}", &key[..4], &key[key.len() - 4..])
     } else {
-        "***".to_string()
+        format!("(set, {} chars)", key.chars().count())
     }
 }
 
@@ -108,12 +106,12 @@ mod tests {
 
     #[test]
     fn test_format_key_preview_short() {
-        assert_eq!(format_key_preview("12345678"), "***");
+        assert_eq!(format_key_preview("12345678"), "(set, 8 chars)");
     }
 
     #[test]
     fn test_format_key_preview_long() {
-        assert_eq!(format_key_preview("sk-abcd1234efgh5678"), "sk-a...5678");
+        assert_eq!(format_key_preview("sk-abcd1234efgh5678"), "(set, 19 chars)");
     }
 
     #[test]

@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 
 use crate::config::ProfileConfig;
+use crate::oauth::source::CredentialSource;
 use crate::oauth::{AuthType, OAuthProvider, OAuthToken};
 
 /// 缓存中的 token
@@ -36,6 +37,15 @@ impl TokenManager {
 
     /// 获取 token，优先从缓存返回，过期时自动刷新
     pub async fn get_token(&self, profile: &ProfileConfig) -> Result<OAuthToken> {
+        self.get_token_inner(profile, false, None).await
+    }
+
+    async fn get_token_inner(
+        &self,
+        profile: &ProfileConfig,
+        force_refresh: bool,
+        stale_cached_at: Option<i64>,
+    ) -> Result<OAuthToken> {
         if profile.auth_type != AuthType::OAuth {
             anyhow::bail!("profile '{}' is not OAuth", profile.name);
         }
@@ -47,7 +57,7 @@ impl TokenManager {
             .normalize();
 
         // 快速路径: 缓存命中且未过期
-        {
+        if !force_refresh {
             let cache = self.cache.lock().await;
             if let Some(cached) = cache.get(&profile.name) {
                 if !cached.token.is_expired(60) {
@@ -68,17 +78,29 @@ impl TokenManager {
         let _guard = refresh_lock.lock().await;
 
         // Double-check: 另一个并发请求可能已经刷新了
-        {
+        if !force_refresh {
             let cache = self.cache.lock().await;
             if let Some(cached) = cache.get(&profile.name) {
                 if !cached.token.is_expired(60) {
                     return Ok(cached.token.clone());
                 }
             }
+        } else if let Some(stale_cached_at) = stale_cached_at {
+            // Several requests can receive a 401 for the same token. If the
+            // first waiter already refreshed it, later waiters reuse that
+            // result instead of rotating the refresh token repeatedly.
+            let cache = self.cache.lock().await;
+            if let Some(cached) = cache.get(&profile.name) {
+                if cached.cached_at != stale_cached_at && !cached.token.is_expired(60) {
+                    return Ok(cached.token.clone());
+                }
+            }
         }
 
         // 执行实际的 load + exchange
-        let token = self.load_and_exchange(profile, &provider).await?;
+        let token = self
+            .load_and_exchange(profile, &provider, force_refresh)
+            .await?;
 
         // 写入缓存
         {
@@ -97,11 +119,13 @@ impl TokenManager {
 
     /// 401 后调用: 清除缓存并重新获取 token
     pub async fn invalidate_and_retry(&self, profile: &ProfileConfig) -> Result<OAuthToken> {
-        {
-            let mut cache = self.cache.lock().await;
-            cache.remove(&profile.name);
-        }
-        self.get_token(profile).await
+        let stale_cached_at = self
+            .cache
+            .lock()
+            .await
+            .get(&profile.name)
+            .map(|cached| cached.cached_at);
+        self.get_token_inner(profile, true, stale_cached_at).await
     }
 
     /// CLI logout 时清除缓存
@@ -115,13 +139,14 @@ impl TokenManager {
         &self,
         profile: &ProfileConfig,
         provider: &OAuthProvider,
+        force_refresh: bool,
     ) -> Result<OAuthToken> {
         match provider {
             OAuthProvider::Chatgpt | OAuthProvider::Openai => {
-                self.load_chatgpt_token(profile).await
+                self.load_chatgpt_token(profile, force_refresh).await
             }
             OAuthProvider::Github => self.load_github_token(profile).await,
-            OAuthProvider::Claude => self.load_simple_token(provider, profile).await,
+            OAuthProvider::Claude => self.load_claude_token(profile, force_refresh).await,
             OAuthProvider::Google => self.load_simple_token(provider, profile).await,
             OAuthProvider::Kimi => self.load_simple_token(provider, profile).await,
             OAuthProvider::Qwen => self.load_simple_token(provider, profile).await,
@@ -130,31 +155,33 @@ impl TokenManager {
     }
 
     /// ChatGPT: 加载凭证 + 过期时自动 refresh
-    async fn load_chatgpt_token(&self, profile: &ProfileConfig) -> Result<OAuthToken> {
-        let cred = super::source::load_credential_chain(
-            &profile.oauth_provider.as_ref().unwrap().normalize(),
-        )
-        .with_context(|| {
-            format!(
-                "ChatGPT token not available for '{}'. Run `claudex auth login chatgpt --profile {}`",
-                profile.name, profile.name
-            )
-        })?;
-
-        let token = cred.into_oauth_token();
+    async fn load_chatgpt_token(
+        &self,
+        profile: &ProfileConfig,
+        force_refresh: bool,
+    ) -> Result<OAuthToken> {
+        let (token, source) = load_token_with_keyring(&OAuthProvider::Chatgpt, profile)
+            .with_context(|| {
+                format!(
+                    "ChatGPT token not available for '{}'. Run `codex login` or `claudex auth login chatgpt --profile {}`",
+                    profile.name, profile.name
+                )
+            })?;
 
         // 如果过期且有 refresh_token，自动刷新
-        if token.is_expired(60) {
+        if force_refresh || token.is_expired(60) {
             if let Some(ref refresh_tok) = token.refresh_token {
                 tracing::info!(
                     profile = %profile.name,
-                    "ChatGPT token expired, refreshing..."
+                    "refreshing ChatGPT OAuth token"
                 );
-                return super::exchange::refresh_chatgpt_token(&self.http_client, refresh_tok)
-                    .await;
+                let refreshed =
+                    super::exchange::refresh_chatgpt_token(&self.http_client, refresh_tok).await?;
+                persist_keyring_token_if_needed(profile, &source, &refreshed);
+                return Ok(refreshed);
             }
             anyhow::bail!(
-                "ChatGPT token expired for '{}' and no refresh_token available. Run `claudex auth login chatgpt --profile {}`",
+                "ChatGPT token for '{}' cannot be refreshed. Run `codex login` or `claudex auth login chatgpt --profile {}`",
                 profile.name, profile.name
             );
         }
@@ -162,17 +189,65 @@ impl TokenManager {
         Ok(token)
     }
 
-    /// GitHub: 加载 GitHub token + 交换为 Copilot bearer token
-    async fn load_github_token(&self, profile: &ProfileConfig) -> Result<OAuthToken> {
-        let cred =
-            super::source::load_credential_chain(&OAuthProvider::Github).with_context(|| {
+    /// Claude subscription: load Claude Code credentials and rotate the
+    /// short-lived access token through the official OAuth endpoint.
+    async fn load_claude_token(
+        &self,
+        profile: &ProfileConfig,
+        force_refresh: bool,
+    ) -> Result<OAuthToken> {
+        let (token, source) = load_token_with_keyring(&OAuthProvider::Claude, profile)
+            .with_context(|| {
                 format!(
-                "GitHub token not available for '{}'. Run `claudex auth login github --profile {}`",
-                profile.name, profile.name
-            )
+                    "Claude subscription token not available for '{}'. Run `claude auth login`, `claude setup-token`, or `claudex auth login claude --profile {}`",
+                    profile.name, profile.name
+                )
             })?;
 
-        let github_token = &cred.access_token;
+        if !force_refresh && !token.is_expired(60) {
+            return Ok(token);
+        }
+
+        let refresh_token = token.refresh_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Claude OAuth token for '{}' cannot be refreshed. Run `claude auth login` or `claude setup-token` again",
+                profile.name
+            )
+        })?;
+        tracing::info!(profile = %profile.name, "refreshing Claude OAuth token");
+        let refreshed = super::exchange::refresh_claude_token(
+            &self.http_client,
+            refresh_token,
+            token.scopes.as_deref(),
+        )
+        .await?;
+
+        match &source {
+            CredentialSource::ExternalCli(path) => {
+                super::source::write_claude_credentials_atomic(
+                    std::path::Path::new(path),
+                    &refreshed,
+                )?;
+            }
+            CredentialSource::Keyring => {
+                super::source::store_keyring(&profile.name, &refreshed)?;
+            }
+            _ => {}
+        }
+        Ok(refreshed)
+    }
+
+    /// GitHub: 加载 GitHub token + 交换为 Copilot bearer token
+    async fn load_github_token(&self, profile: &ProfileConfig) -> Result<OAuthToken> {
+        let (token, _) =
+            load_token_with_keyring(&OAuthProvider::Github, profile).with_context(|| {
+                format!(
+                    "GitHub token not available for '{}'. Run `claudex auth login github --profile {}`",
+                    profile.name, profile.name
+                )
+            })?;
+
+        let github_token = &token.access_token;
 
         // 交换为 Copilot bearer token
         let copilot = super::exchange::exchange_github_for_copilot(&self.http_client, github_token)
@@ -198,7 +273,7 @@ impl TokenManager {
         provider: &OAuthProvider,
         profile: &ProfileConfig,
     ) -> Result<OAuthToken> {
-        let cred = super::source::load_credential_chain(provider).with_context(|| {
+        let (token, _) = load_token_with_keyring(provider, profile).with_context(|| {
             format!(
                 "OAuth token not available for '{}'. Run `claudex auth login {} --profile {}`",
                 profile.name,
@@ -206,7 +281,38 @@ impl TokenManager {
                 profile.name
             )
         })?;
-        Ok(cred.into_oauth_token())
+        Ok(token)
+    }
+}
+
+fn load_token_with_keyring(
+    provider: &OAuthProvider,
+    profile: &ProfileConfig,
+) -> Result<(OAuthToken, CredentialSource)> {
+    match super::source::load_credential_chain(provider) {
+        Ok(credential) => {
+            let source = credential.source.clone();
+            Ok((credential.into_oauth_token(), source))
+        }
+        Err(external_error) => super::source::load_keyring(&profile.name)
+            .map(|token| (token, CredentialSource::Keyring))
+            .with_context(|| format!("external credentials unavailable: {external_error:#}")),
+    }
+}
+
+fn persist_keyring_token_if_needed(
+    profile: &ProfileConfig,
+    source: &CredentialSource,
+    token: &OAuthToken,
+) {
+    if matches!(source, CredentialSource::Keyring) {
+        if let Err(error) = super::source::store_keyring(&profile.name, token) {
+            tracing::warn!(
+                profile = %profile.name,
+                error = %error,
+                "could not update refreshed OAuth token in the OS credential store"
+            );
+        }
     }
 }
 

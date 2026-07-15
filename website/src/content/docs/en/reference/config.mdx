@@ -296,33 +296,33 @@ enabled = false
 ### OAuth Profile Examples
 
 ```toml
-# Claude Max (skips proxy, uses Claude's native OAuth from ~/.claude)
+# Claude Max/Pro (local gateway reuses Claude Code OAuth from ~/.claude)
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
-default_model = "claude-sonnet-4-20250514"
+base_url = "https://api.anthropic.com"
+default_model = "sonnet"
 auth_type = "oauth"
 oauth_provider = "claude"
 
 [profiles.models]
-haiku = "claude-haiku-4-20250514"
-sonnet = "claude-sonnet-4-20250514"
-opus = "claude-opus-4-20250514"
+haiku = "haiku"
+sonnet = "sonnet"
+opus = "opus"
 
 # ChatGPT/Codex subscription (OpenAIResponses)
 [[profiles]]
 name = "codex-sub"
 provider_type = "OpenAIResponses"
 base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.6"
 auth_type = "oauth"
 oauth_provider = "openai"
 
 [profiles.models]
-haiku = "codex-mini-latest"
-sonnet = "gpt-5.3-codex"
-opus = "gpt-5.3-codex"
+haiku = "gpt-5.6"
+sonnet = "gpt-5.6"
+opus = "gpt-5.6"
 
 # Google Gemini via OAuth
 [[profiles]]
@@ -371,7 +371,7 @@ oauth_provider = "gitlab"
 ```
 
 <Aside type="caution">
-  For the `claude` OAuth provider, Claudex skips the proxy and lets Claude Code use its own OAuth directly. For all other OAuth providers, the proxy handles token management and refresh.
+  Every OAuth provider uses the local gateway. Claude credentials come from Claude Code and ChatGPT credentials come from Codex; both can participate in `model_routes` inside one Claude Code session.
 </Aside>
 
 ## Smart Router

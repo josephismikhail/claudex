@@ -296,11 +296,11 @@ enabled = false
 ### OAuth-Profilbeispiele
 
 ```toml
-# Claude Max (ueberspringt Proxy, verwendet natives OAuth von Claude aus ~/.claude)
+# Claude Max/Pro (local gateway reuses Claude Code OAuth from ~/.claude)
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -371,7 +371,7 @@ oauth_provider = "gitlab"
 ```
 
 <Aside type="caution">
-  Fuer den `claude` OAuth-Anbieter ueberspringt Claudex den Proxy und laesst Claude Code sein eigenes OAuth direkt verwenden. Fuer alle anderen OAuth-Anbieter uebernimmt der Proxy die Token-Verwaltung und -Aktualisierung.
+  Every OAuth provider uses the local gateway. Claude credentials come from Claude Code and ChatGPT credentials come from Codex; both can participate in `model_routes` in one session.
 </Aside>
 
 ## Intelligenter Router

@@ -341,7 +341,7 @@ Utilisez votre abonnement Claude existant via la session OAuth native de Claude 
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -353,7 +353,7 @@ opus = "claude-opus-4-20250514"
 ```
 
 <Aside type="note">
-  Les profils OAuth Claude utilisent un mode gateway auth special. Claudex contourne le proxy et laisse Claude Code utiliser son propre OAuth directement. Aucune etape `claudex auth login` separee n'est necessaire.
+  Claude OAuth profiles use the local gateway, which reuses and refreshes Claude Code's credentials. Authenticate once with `claude auth login`; no separate Claudex browser flow is required.
 </Aside>
 
 ### ChatGPT Plus / Codex CLI

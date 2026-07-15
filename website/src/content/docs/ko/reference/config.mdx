@@ -296,11 +296,11 @@ enabled = false
 ### OAuth 프로파일 예시
 
 ```toml
-# Claude Max (프록시 건너뜀, ~/.claude의 Claude 네이티브 OAuth 사용)
+# Claude Max/Pro (local gateway reuses Claude Code OAuth from ~/.claude)
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -371,7 +371,7 @@ oauth_provider = "gitlab"
 ```
 
 <Aside type="caution">
-  `claude` OAuth 프로바이더의 경우, Claudex가 프록시를 건너뛰고 Claude Code가 자체 OAuth를 직접 사용하도록 합니다. 다른 모든 OAuth 프로바이더는 프록시가 토큰 관리와 갱신을 처리합니다.
+  Every OAuth provider uses the local gateway. Claude credentials come from Claude Code and ChatGPT credentials come from Codex; both can participate in `model_routes` in one session.
 </Aside>
 
 ## 스마트 라우터

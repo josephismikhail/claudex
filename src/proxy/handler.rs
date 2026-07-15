@@ -21,28 +21,16 @@ pub async fn handle_messages(
     let start = Instant::now();
 
     // 入站请求日志
-    let auth_header = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            if s.len() > 20 {
-                format!("{}...", &s[..20])
-            } else {
-                s.to_string()
-            }
-        })
-        .unwrap_or_else(|| "(none)".to_string());
-    let api_key_header = headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            if s.len() > 20 {
-                format!("{}...", &s[..20])
-            } else {
-                s.to_string()
-            }
-        })
-        .unwrap_or_else(|| "(none)".to_string());
+    let auth_header = if headers.contains_key("authorization") {
+        "(present)"
+    } else {
+        "(none)"
+    };
+    let api_key_header = if headers.contains_key("x-api-key") {
+        "(present)"
+    } else {
+        "(none)"
+    };
 
     tracing::info!(
         profile = %profile_name,
@@ -95,6 +83,7 @@ pub async fn handle_messages(
                 .into_response();
         }
     };
+    normalize_claude_oauth_base_url(&mut profile);
 
     if !profile.enabled {
         return (
@@ -262,6 +251,17 @@ fn resolve_model_route(
     Ok(target.clone())
 }
 
+fn normalize_claude_oauth_base_url(profile: &mut ProfileConfig) {
+    let is_claude_oauth = profile.auth_type == AuthType::OAuth
+        && profile
+            .oauth_provider
+            .as_ref()
+            .is_some_and(|provider| provider.normalize() == crate::oauth::OAuthProvider::Claude);
+    if is_claude_oauth && profile.base_url.trim_end_matches('/') == "https://api.claude.ai" {
+        profile.base_url = "https://api.anthropic.com".to_string();
+    }
+}
+
 /// Resolve "auto" profile via smart router
 async fn resolve_auto_profile(state: &ProxyState, body: &Value) -> String {
     let config = state.config.read().await;
@@ -376,7 +376,7 @@ async fn try_with_circuit_breaker(
 async fn try_forward(
     state: &ProxyState,
     profile: &ProfileConfig,
-    _headers: &HeaderMap,
+    headers: &HeaderMap,
     body: &Value,
     is_streaming: bool,
 ) -> anyhow::Result<Response> {
@@ -442,7 +442,7 @@ async fn try_forward(
         .post(&url)
         .header("content-type", "application/json");
 
-    req = adapter.apply_auth(req, profile);
+    req = adapter.apply_auth(req, profile, headers);
     req = adapter.apply_extra_headers(req, profile);
 
     for (k, v) in &profile.custom_headers {
@@ -709,6 +709,33 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("missing profile 'missing'"));
+    }
+
+    #[test]
+    fn normalizes_legacy_claude_oauth_endpoint() {
+        let mut profile = ProfileConfig {
+            base_url: "https://api.claude.ai/".to_string(),
+            auth_type: AuthType::OAuth,
+            oauth_provider: Some(crate::oauth::OAuthProvider::Claude),
+            ..Default::default()
+        };
+
+        normalize_claude_oauth_base_url(&mut profile);
+
+        assert_eq!(profile.base_url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn leaves_api_key_endpoint_unchanged() {
+        let mut profile = ProfileConfig {
+            base_url: "https://api.claude.ai".to_string(),
+            auth_type: AuthType::ApiKey,
+            ..Default::default()
+        };
+
+        normalize_claude_oauth_base_url(&mut profile);
+
+        assert_eq!(profile.base_url, "https://api.claude.ai");
     }
 
     // ── extract_and_store_context ──

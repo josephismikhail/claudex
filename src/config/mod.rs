@@ -549,7 +549,7 @@ enabled = false
                 toml::to_string_pretty(self).context("failed to serialize config to TOML")?
             }
         };
-        write_config_atomically(&path, content.as_bytes())?;
+        write_file_atomically(&path, content.as_bytes())?;
         Ok(())
     }
 
@@ -586,7 +586,9 @@ enabled = false
 /// directly to the destination first truncates it, so a process or machine
 /// failure during serialization can destroy the user's profiles. Write and
 /// flush a sibling temporary file, then atomically replace the destination.
-fn write_config_atomically(path: &Path, content: &[u8]) -> Result<()> {
+/// Atomically replace a local state file without exposing partially written
+/// JSON/TOML to another long-running Claudex or provider CLI process.
+pub(crate) fn write_file_atomically(path: &Path, content: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .context("config path has no parent directory")?;
@@ -1233,7 +1235,7 @@ profiles:
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "old contents").unwrap();
 
-        write_config_atomically(&path, b"new contents").unwrap();
+        write_file_atomically(&path, b"new contents").unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new contents");
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())

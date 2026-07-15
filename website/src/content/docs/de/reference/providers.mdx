@@ -27,7 +27,7 @@ import { Aside } from '@astrojs/starlight/components';
 | GitHub Copilot | OpenAICompatible | OAuth | Ja | Ja | Ja | Device Code Flow |
 | GitLab Duo | OpenAICompatible | OAuth (PAT) | Ja | Ja | Ja | `GITLAB_TOKEN`-Umgebungsvariable |
 | ChatGPT/Codex | OpenAIResponses | OAuth | Ja | Ja | Ja | Responses API |
-| Claude (Abo) | DirectAnthropic | OAuth | Ja | Ja | Ja | Ueberspringt Proxy |
+| Claude (Abo) | DirectAnthropic | OAuth | Ja | Ja | Ja | Local gateway + Claude Code credentials |
 | Google Gemini (Abo) | OpenAICompatible | OAuth | Ja | Ja | Ja | Gemini CLI-Anmeldedaten |
 | Qwen (Abo) | OpenAICompatible | OAuth | Ja | Ja | Ja | Device Code Flow |
 | Ollama | OpenAICompatible | Keine | Ja | Modellabhaengig | Ja | Lokal, kein API-Schluessel |
@@ -187,11 +187,11 @@ import { Aside } from '@astrojs/starlight/components';
 
 ### Claude (Abonnement)
 
-- **Base URL**: `https://api.claude.ai`
+- **Base URL**: `https://api.anthropic.com`
 - **Typ**: DirectAnthropic
 - **Auth**: OAuth (liest `~/.claude/.credentials.json`)
 - **Modelle**: claude-sonnet-4, claude-opus-4, claude-haiku-4
-- **Hinweis**: Proxy wird uebersprungen. Claude Code verwendet sein eigenes OAuth direkt.
+- **Hinweis**: Uses the local gateway, which reuses and refreshes Claude Code OAuth credentials.
 
 ### Google Gemini (Abonnement)
 

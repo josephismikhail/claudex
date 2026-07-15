@@ -16,23 +16,23 @@ fn provider_defaults(provider: &OAuthProvider) -> ProviderDefaults {
     match provider {
         OAuthProvider::Claude => ProviderDefaults {
             provider_type: ProviderType::DirectAnthropic,
-            base_url: "https://api.claude.ai",
-            default_model: "claude-sonnet-4-20250514",
+            base_url: "https://api.anthropic.com",
+            default_model: "sonnet",
             models: ProfileModels {
-                haiku: Some("claude-haiku-4-5-20251001".to_string()),
-                sonnet: Some("claude-sonnet-4-20250514".to_string()),
-                opus: Some("claude-opus-4-6-20250610".to_string()),
+                haiku: Some("haiku".to_string()),
+                sonnet: Some("sonnet".to_string()),
+                opus: Some("opus".to_string()),
             },
             max_tokens: None,
         },
         OAuthProvider::Chatgpt | OAuthProvider::Openai => ProviderDefaults {
             provider_type: ProviderType::OpenAIResponses,
             base_url: "https://chatgpt.com/backend-api/codex",
-            default_model: "gpt-5.3-codex",
+            default_model: "gpt-5.6",
             models: ProfileModels {
-                haiku: Some("gpt-5.3-codex".to_string()),
-                sonnet: Some("gpt-5.3-codex".to_string()),
-                opus: Some("gpt-5.3-codex".to_string()),
+                haiku: Some("gpt-5.6".to_string()),
+                sonnet: Some("gpt-5.6".to_string()),
+                opus: Some("gpt-5.6".to_string()),
             },
             max_tokens: None,
         },
@@ -180,9 +180,7 @@ async fn login_claude(profile_name: &str) -> Result<()> {
 
     super::source::store_keyring(profile_name, &token)?;
     println!("Claude OAuth token stored for profile '{profile_name}'.");
-    println!(
-        "Note: Claude subscription profiles bypass the proxy (Claude Code uses its own OAuth)."
-    );
+    println!("Claudex will reuse Claude Code's local OAuth session through the local gateway.");
     Ok(())
 }
 
@@ -640,9 +638,27 @@ pub async fn refresh(config: &ClaudexConfig, profile_name: &str) -> Result<()> {
     match provider {
         OAuthProvider::Claude => {
             let cred = super::source::read_claude_credentials()?;
+            let source = cred.source.clone();
             let token = cred.into_oauth_token();
-            super::source::store_keyring(profile_name, &token)?;
-            println!("Refreshed Claude token from ~/.claude/.credentials.json");
+            let refreshed = if let Some(refresh_token) = token.refresh_token.as_deref() {
+                let client = reqwest::Client::new();
+                super::exchange::refresh_claude_token(
+                    &client,
+                    refresh_token,
+                    token.scopes.as_deref(),
+                )
+                .await?
+            } else {
+                token
+            };
+            if let super::source::CredentialSource::ExternalCli(path) = source {
+                super::source::write_claude_credentials_atomic(
+                    std::path::Path::new(&path),
+                    &refreshed,
+                )?;
+            }
+            super::source::store_keyring(profile_name, &refreshed)?;
+            println!("Claude token refreshed for profile '{profile_name}'.");
         }
         OAuthProvider::Google | OAuthProvider::Kimi | OAuthProvider::Gitlab => {
             let cred = super::source::load_credential_chain(provider)?;
@@ -728,46 +744,8 @@ pub async fn ensure_valid_token(profile: &mut ProfileConfig) -> Result<()> {
         return Ok(());
     }
 
-    if !profile.api_key.is_empty() {
-        return Ok(());
-    }
-
-    let provider = match profile.oauth_provider.as_ref() {
-        Some(p) => p.normalize(),
-        None => anyhow::bail!("no oauth_provider for profile '{}'", profile.name),
-    };
-
-    let cred = super::source::load_credential_chain(&provider).with_context(|| {
-        format!(
-            "OAuth token not available for '{}'. Run `claudex auth login {} --profile {}`",
-            profile.name,
-            provider.display_name().to_lowercase(),
-            profile.name
-        )
-    })?;
-    let token = cred.into_oauth_token();
-
-    if token.is_expired(60) {
-        if matches!(provider, OAuthProvider::Chatgpt | OAuthProvider::Openai) {
-            if let Some(ref refresh_tok) = token.refresh_token {
-                tracing::info!(
-                    "ChatGPT token expired for profile '{}', refreshing...",
-                    profile.name
-                );
-                let client = reqwest::Client::new();
-                let new_token =
-                    super::exchange::refresh_chatgpt_token(&client, refresh_tok).await?;
-                super::manager::apply_token_to_profile(profile, &new_token);
-                return Ok(());
-            }
-        }
-        anyhow::bail!(
-            "OAuth token expired for '{}' and cannot auto-refresh. Run `claudex auth refresh {}`",
-            profile.name,
-            profile.name
-        );
-    }
-
+    let manager = super::manager::TokenManager::new(reqwest::Client::new());
+    let token = manager.get_token(profile).await?;
     super::manager::apply_token_to_profile(profile, &token);
     Ok(())
 }
@@ -797,7 +775,7 @@ mod tests {
     #[test]
     fn test_provider_defaults_claude() {
         let defaults = provider_defaults(&OAuthProvider::Claude);
-        assert_eq!(defaults.base_url, "https://api.claude.ai");
+        assert_eq!(defaults.base_url, "https://api.anthropic.com");
         assert!(matches!(
             defaults.provider_type,
             ProviderType::DirectAnthropic
@@ -808,7 +786,7 @@ mod tests {
     fn test_provider_defaults_openai() {
         let defaults = provider_defaults(&OAuthProvider::Openai);
         assert_eq!(defaults.base_url, "https://chatgpt.com/backend-api/codex");
-        assert_eq!(defaults.default_model, "gpt-5.3-codex");
+        assert_eq!(defaults.default_model, "gpt-5.6");
         assert!(matches!(
             defaults.provider_type,
             ProviderType::OpenAIResponses

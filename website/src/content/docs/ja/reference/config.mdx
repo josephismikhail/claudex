@@ -296,11 +296,11 @@ enabled = false
 ### OAuth プロファイル設定例
 
 ```toml
-# Claude Max（プロキシをスキップ、~/.claude のネイティブ OAuth を使用）
+# Claude Max/Pro (local gateway reuses Claude Code OAuth from ~/.claude)
 [[profiles]]
 name = "claude-max"
 provider_type = "DirectAnthropic"
-base_url = "https://api.claude.ai"
+base_url = "https://api.anthropic.com"
 default_model = "claude-sonnet-4-20250514"
 auth_type = "oauth"
 oauth_provider = "claude"
@@ -371,7 +371,7 @@ oauth_provider = "gitlab"
 ```
 
 <Aside type="caution">
-  `claude` OAuth プロバイダーの場合、Claudex はプロキシをスキップし、Claude Code が自身の OAuth を直接使用できるようにします。その他すべての OAuth プロバイダーでは、プロキシがトークン管理とリフレッシュを処理します。
+  Every OAuth provider uses the local gateway. Claude credentials come from Claude Code and ChatGPT credentials come from Codex; both can participate in `model_routes` in one session.
 </Aside>
 
 ## スマートルーター
