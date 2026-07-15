@@ -76,12 +76,18 @@ pub fn launch_claude(
         cmd.env(k, v);
     }
 
+    // Apply after profile variables so telemetry/exporters cannot be
+    // accidentally re-enabled by an old profile or inherited shell setting.
+    crate::privacy::apply_private_environment(&mut cmd);
+
+    let private_args = crate::privacy::enforce_private_settings(extra_args)?;
+
     // 自动禁用 Chrome 集成（除非用户显式传了 --chrome）
     if !extra_args.iter().any(|a| a == "--chrome") {
         cmd.arg("--no-chrome");
     }
 
-    cmd.args(extra_args);
+    cmd.args(&private_args);
 
     tracing::info!(
         profile = %profile.name,
@@ -258,7 +264,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo ARGS=%*\r\n)\r\n",
+                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo ARGS=%*\r\n)\r\n",
                 output.display()
             ),
         )
@@ -282,6 +288,13 @@ mod tests {
                 haiku: Some("fast".to_string()),
                 ..Default::default()
             },
+            extra_env: std::collections::HashMap::from([
+                ("DISABLE_TELEMETRY".to_string(), "0".to_string()),
+                (
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
+                    "0".to_string(),
+                ),
+            ]),
             ..Default::default()
         };
 
@@ -299,6 +312,12 @@ mod tests {
         assert!(child_output.contains("TOKEN=claudex-passthrough"));
         assert!(child_output.contains("MODEL=test-model"));
         assert!(child_output.contains("HAIKU=provider-fast-model"));
-        assert!(child_output.contains("ARGS=--no-chrome --print hello"));
+        assert!(child_output.contains("PRIVATE=1"));
+        assert!(child_output.contains("TELEMETRY=1"));
+        assert!(child_output.contains("UPDATES=1"));
+        assert!(child_output.contains("OTEL=none"));
+        assert!(child_output.contains("ARGS=--no-chrome --settings"));
+        assert!(child_output.contains("skipWebFetchPreflight"));
+        assert!(child_output.contains("--print hello"));
     }
 }

@@ -77,6 +77,14 @@ async fn inject_rag_context(
         }
     };
 
+    if let Err(e) = rag_index
+        .ensure_built(&state.http_client, &base_url, &api_key)
+        .await
+    {
+        tracing::debug!(error = %e, "RAG index build failed");
+        return;
+    }
+
     match rag_index
         .search(&query, &state.http_client, &base_url, &api_key)
         .await

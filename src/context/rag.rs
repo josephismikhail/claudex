@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 
 use super::RagConfig;
 
@@ -12,6 +12,7 @@ pub struct RagIndex {
     config: RagConfig,
     chunks: Arc<RwLock<Vec<TextChunk>>>,
     embeddings: Arc<RwLock<Vec<Vec<f32>>>>,
+    initialized: Arc<OnceCell<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,10 +28,25 @@ impl RagIndex {
             config,
             chunks: Arc::new(RwLock::new(Vec::new())),
             embeddings: Arc::new(RwLock::new(Vec::new())),
+            initialized: Arc::new(OnceCell::new()),
         }
     }
 
-    pub async fn build_index(
+    /// Build the index lazily on the first model request that needs RAG.
+    /// Proxy startup must remain network-silent even when RAG is configured.
+    pub async fn ensure_built(
+        &self,
+        http_client: &reqwest::Client,
+        base_url: &str,
+        api_key: &str,
+    ) -> Result<()> {
+        self.initialized
+            .get_or_try_init(|| async { self.build_index(http_client, base_url, api_key).await })
+            .await?;
+        Ok(())
+    }
+
+    async fn build_index(
         &self,
         http_client: &reqwest::Client,
         base_url: &str,
@@ -92,6 +108,13 @@ impl RagIndex {
             return Ok(Vec::new());
         }
 
+        let chunks = self.chunks.read().await;
+        let embeddings = self.embeddings.read().await;
+
+        if chunks.is_empty() || embeddings.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let model = &self.config.model;
         let query_embedding =
             compute_embeddings(&[query], http_client, base_url, api_key, model).await?;
@@ -99,13 +122,6 @@ impl RagIndex {
             Some(v) => v,
             None => return Ok(Vec::new()),
         };
-
-        let chunks = self.chunks.read().await;
-        let embeddings = self.embeddings.read().await;
-
-        if chunks.is_empty() || embeddings.is_empty() {
-            return Ok(Vec::new());
-        }
 
         // Compute cosine similarity
         let mut scores: Vec<(usize, f32)> = embeddings

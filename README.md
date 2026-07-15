@@ -47,7 +47,7 @@ This is a Windows-first stability fork of [StringKe/claudex](https://github.com/
 - **OAuth subscriptions** — ChatGPT/Codex, Claude Max, GitHub Copilot, GitLab Duo, Google Gemini, Qwen, Kimi
 - **Configuration sets** — Install and manage reusable Claude Code configuration sets from git repos
 - **TUI dashboard** — Real-time profile health, metrics, logs, and quick-launch
-- **Self-update** — `claudex update` downloads the latest release from GitHub
+- **Private by default** — no telemetry, crash reporting, background provider probes, or automatic update checks
 
 ## Installation
 
@@ -174,7 +174,6 @@ Supports TOML and YAML formats. See [`config.example.toml`](./config.example.tom
 | `claudex config get <key>` | Get a config value |
 | `claudex config set <key> <value>` | Set a config value |
 | `claudex config export --format <fmt>` | Export config (json/toml/yaml) |
-| `claudex update [--check]` | Self-update from GitHub Releases |
 | `claudex auth login <provider>` | OAuth login |
 | `claudex auth login github --enterprise-url <domain>` | GitHub Enterprise Copilot |
 | `claudex auth status` | Show OAuth token status |
@@ -266,13 +265,23 @@ default_model = "claude-opus-model"
 
 The target profiles must exist and be enabled. Run `claudex config validate` after editing the routes.
 
+## Privacy
+
+Claudex makes no automatic outbound requests. Provider calls, OAuth, remote
+configuration sets, connectivity tests, and network-capable Claude Code tools
+run only when you explicitly use them. Claudex-launched Claude Code sessions
+also force-disable telemetry, error reporting, feedback, auto-updates,
+OpenTelemetry exporters, hosted artifacts, marketplace auto-installation, and
+the WebFetch hostname preflight to Anthropic. See [PRIVACY.md](./PRIVACY.md) for
+the exact boundary and offline guidance.
+
 ## Architecture
 
 ```
 src/
 ├── main.rs
 ├── cli.rs
-├── update.rs
+├── privacy.rs       # Enforced local-only Claude Code runtime policy
 ├── util.rs
 ├── config/
 │   ├── mod.rs          # Config discovery + parsing (figment)

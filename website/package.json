@@ -2,12 +2,13 @@
   "name": "claudex-docs",
   "type": "module",
   "version": "0.0.1",
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
-    "sync-schemas": "rm -rf public/schemas && cp -r ../schemas public/schemas",
-    "dev": "pnpm sync-schemas && astro dev",
-    "build": "pnpm sync-schemas && astro build",
-    "preview": "astro preview",
-    "astro": "astro"
+    "sync-schemas": "node scripts/sync-schemas.mjs",
+    "privacy": "astro telemetry disable && astro preferences disable checkUpdates",
+    "dev": "pnpm privacy && pnpm sync-schemas && astro dev",
+    "build": "pnpm privacy && pnpm sync-schemas && astro build",
+    "preview": "pnpm privacy && astro preview"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild", "sharp"]

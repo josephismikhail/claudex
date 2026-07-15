@@ -28,4 +28,4 @@ config.toml
 
 # Internal docs and scripts (local only)
 /docs/
-scripts/
+/scripts/

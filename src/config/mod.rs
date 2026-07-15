@@ -1112,10 +1112,12 @@ profiles:
 
     #[test]
     fn test_figment_toml_save_load_roundtrip() {
-        let mut config = ClaudexConfig::default();
-        config.proxy_port = 5555;
-        config.log_level = "warn".to_string();
-        config.config_format = ConfigFormat::Toml;
+        let config = ClaudexConfig {
+            proxy_port: 5555,
+            log_level: "warn".to_string(),
+            config_format: ConfigFormat::Toml,
+            ..Default::default()
+        };
 
         let toml_content = toml::to_string_pretty(&config).unwrap();
         let figment = Figment::from(Serialized::defaults(ClaudexConfig::default()))
@@ -1127,10 +1129,12 @@ profiles:
 
     #[test]
     fn test_figment_yaml_save_load_roundtrip() {
-        let mut config = ClaudexConfig::default();
-        config.proxy_port = 6666;
-        config.log_level = "error".to_string();
-        config.config_format = ConfigFormat::Yaml;
+        let config = ClaudexConfig {
+            proxy_port: 6666,
+            log_level: "error".to_string(),
+            config_format: ConfigFormat::Yaml,
+            ..Default::default()
+        };
 
         let yaml_content = serde_yml::to_string(&config).unwrap();
         let figment = Figment::from(Serialized::defaults(ClaudexConfig::default()))

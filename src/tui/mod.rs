@@ -21,7 +21,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::{ClaudexConfig, ProfileConfig, ProviderType};
 use crate::oauth::AuthType;
-use crate::proxy::health::HealthMap;
+use crate::proxy::health::{HealthMap, HealthStatus};
 use crate::proxy::metrics::MetricsStore;
 
 // ── Profile Form Field Indices ──
@@ -654,12 +654,31 @@ async fn handle_async_actions(app: &mut App) -> Result<()> {
                 log::info!("Testing {}...", profile_name);
                 match crate::config::profile::test_connectivity(&profile).await {
                     Ok(latency) => {
+                        app.health_status.write().await.insert(
+                            profile_name.clone(),
+                            HealthStatus {
+                                healthy: true,
+                                latency_ms: Some(latency),
+                                last_check: Some(std::time::Instant::now()),
+                                error: None,
+                            },
+                        );
                         let msg = format!("{}: OK ({latency}ms)", profile_name);
                         log::info!("{msg}");
                         app.notification = Some(Notification::success(msg));
                     }
                     Err(e) => {
-                        let msg = format!("{}: FAIL - {e}", profile_name);
+                        let error = e.to_string();
+                        app.health_status.write().await.insert(
+                            profile_name.clone(),
+                            HealthStatus {
+                                healthy: false,
+                                latency_ms: None,
+                                last_check: Some(std::time::Instant::now()),
+                                error: Some(error.clone()),
+                            },
+                        );
+                        let msg = format!("{}: FAIL - {error}", profile_name);
                         log::error!("{msg}");
                         app.notification = Some(Notification::error(msg));
                     }

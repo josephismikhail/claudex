@@ -1,6 +1,6 @@
 [package]
 name = "claudex"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "Multi-instance Claude Code manager with intelligent translation proxy"
 license = "MIT"
@@ -87,9 +87,6 @@ url = "2"
 # Utility
 which = "7"
 open = "5"
-
-# Self-update
-self_update = { version = "0.42", features = ["rustls", "archive-tar", "archive-zip"], default-features = false }
 
 # OAuth PKCE
 sha2 = "0.10"

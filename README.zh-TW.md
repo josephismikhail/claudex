@@ -44,7 +44,6 @@ Claudex 是一個統一的代理層，讓 [Claude Code](https://docs.anthropic.c
 - **OAuth 訂閱** — ChatGPT/Codex、Claude Max、GitHub Copilot、GitLab Duo、Google Gemini、Qwen、Kimi
 - **設定集** — 從 git 倉庫安裝並管理可重用的 Claude Code 設定集
 - **TUI 儀表板** — 即時 profile 健康狀態、指標、日誌與快速啟動
-- **自動更新** — `claudex update` 從 GitHub 下載最新版本
 
 ## 安裝
 
@@ -167,7 +166,6 @@ Claudex 依下列順序搜尋設定檔：
 | `claudex config get <key>` | 取得設定值 |
 | `claudex config set <key> <value>` | 設定設定值 |
 | `claudex config export --format <fmt>` | 匯出設定（json/toml/yaml） |
-| `claudex update [--check]` | 從 GitHub Releases 自動更新 |
 | `claudex auth login <provider>` | OAuth 登入 |
 | `claudex auth login github --enterprise-url <domain>` | GitHub Enterprise Copilot |
 | `claudex auth status` | 顯示 OAuth token 狀態 |
@@ -234,7 +232,7 @@ opus = "deepseek/deepseek-r1"
 src/
 ├── main.rs
 ├── cli.rs
-├── update.rs
+├── privacy.rs
 ├── util.rs
 ├── config/
 │   ├── mod.rs          # 設定探索 + 解析（figment）
