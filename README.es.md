@@ -4,10 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/StringKe/claudex/actions/workflows/ci.yml"><img src="https://github.com/StringKe/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://github.com/StringKe/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
-  <a href="https://github.com/StringKe/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StringKe/claudex" alt="Licencia"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://img.shields.io/github/v/release/StringKe/claudex" alt="Última versión"></a>
+  <a href="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml"><img src="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://github.com/josephismikhail/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/josephismikhail/claudex" alt="Licencia"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://img.shields.io/github/v/release/josephismikhail/claudex" alt="Última versión"></a>
 </p>
 
 <p align="center">
@@ -50,20 +50,20 @@ Claudex es un proxy unificado que permite a [Claude Code](https://docs.anthropic
 
 ```bash
 # Una línea (Linux / macOS)
-curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
 
 # Desde el código fuente
-cargo install --git https://github.com/StringKe/claudex
+cargo install --git https://github.com/josephismikhail/claudex
 
 # O descarga desde GitHub Releases
-# https://github.com/StringKe/claudex/releases
+# https://github.com/josephismikhail/claudex/releases
 ```
 
 ### Requisitos del sistema
 
 - macOS (Intel / Apple Silicon) o Linux (x86_64 / ARM64)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) instalado
-- Windows: descarga el binario precompilado desde [Releases](https://github.com/StringKe/claudex/releases)
+- Windows: descarga el binario precompilado desde [Releases](https://github.com/josephismikhail/claudex/releases)
 
 ## Inicio rápido
 

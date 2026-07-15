@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
+use crossterm::cursor::Show;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -16,6 +17,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::widgets::ListState;
 use ratatui::Terminal;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
 use crate::config::{ClaudexConfig, ProfileConfig, ProviderType};
 use crate::oauth::AuthType;
@@ -194,25 +196,31 @@ impl FormField {
             }
             _ => {
                 self.value.insert(self.cursor_pos, c);
-                self.cursor_pos += 1;
+                self.cursor_pos += c.len_utf8();
             }
         }
     }
 
     pub fn delete_char(&mut self) {
         if self.cursor_pos > 0 {
-            self.cursor_pos -= 1;
-            self.value.remove(self.cursor_pos);
+            if let Some((previous, _)) = self.value[..self.cursor_pos].char_indices().last() {
+                self.value.remove(previous);
+                self.cursor_pos = previous;
+            }
         }
     }
 
     pub fn move_cursor_left(&mut self) {
-        self.cursor_pos = self.cursor_pos.saturating_sub(1);
+        if let Some((previous, _)) = self.value[..self.cursor_pos].char_indices().last() {
+            self.cursor_pos = previous;
+        }
     }
 
     pub fn move_cursor_right(&mut self) {
         if self.cursor_pos < self.value.len() {
-            self.cursor_pos += 1;
+            if let Some(next) = self.value[self.cursor_pos..].chars().next() {
+                self.cursor_pos += next.len_utf8();
+            }
         }
     }
 
@@ -305,22 +313,25 @@ impl ProfileForm {
         }
     }
 
-    pub fn to_profile_config(&self) -> ProfileConfig {
+    pub fn to_profile_config(&self, existing: Option<&ProfileConfig>) -> ProfileConfig {
         let provider_type = match self.fields[FIELD_PROVIDER_TYPE].value.as_str() {
             "DirectAnthropic" => ProviderType::DirectAnthropic,
             "OpenAIResponses" => ProviderType::OpenAIResponses,
             _ => ProviderType::OpenAICompatible,
         };
-        ProfileConfig {
-            name: self.fields[FIELD_NAME].value.clone(),
-            provider_type,
-            base_url: self.fields[FIELD_BASE_URL].value.clone(),
-            api_key: self.fields[FIELD_API_KEY].value.clone(),
-            default_model: self.fields[FIELD_MODEL].value.clone(),
-            priority: self.fields[FIELD_PRIORITY].value.parse().unwrap_or(100),
-            enabled: self.fields[FIELD_ENABLED].value == "true",
-            ..Default::default()
+        let mut profile = existing.cloned().unwrap_or_default();
+        profile.name = self.fields[FIELD_NAME].value.clone();
+        profile.provider_type = provider_type;
+        profile.base_url = self.fields[FIELD_BASE_URL].value.clone();
+        // The edit form intentionally does not load a saved secret. A blank
+        // password field therefore means "keep it", not "erase it".
+        if existing.is_none() || !self.fields[FIELD_API_KEY].value.is_empty() {
+            profile.api_key = self.fields[FIELD_API_KEY].value.clone();
         }
+        profile.default_model = self.fields[FIELD_MODEL].value.clone();
+        profile.priority = self.fields[FIELD_PRIORITY].value.parse().unwrap_or(100);
+        profile.enabled = self.fields[FIELD_ENABLED].value == "true";
+        profile
     }
 
     pub fn focus_next(&mut self) {
@@ -349,6 +360,10 @@ pub struct App {
     pub launch_profile: Option<String>,
     pub notification: Option<Notification>,
     pub pending_action: Option<AsyncAction>,
+    /// Proxy task owned by this dashboard session, if any.
+    pub proxy_task: Option<JoinHandle<()>>,
+    /// Avoid opening a new health-check connection on every 250 ms render tick.
+    pub last_proxy_check: Instant,
     pub confirm_target: Option<String>,
     pub form: ProfileForm,
 
@@ -381,6 +396,8 @@ impl App {
             launch_profile: None,
             notification: None,
             pending_action: None,
+            proxy_task: None,
+            last_proxy_check: Instant::now(),
             confirm_target: None,
             form: ProfileForm::new_blank(),
             profile_list: Vec::new(),
@@ -474,15 +491,18 @@ pub async fn run_tui(
     tui_logger::init_logger(log::LevelFilter::Info).ok();
     tui_logger::set_default_level(log::LevelFilter::Info);
 
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal_session = TerminalSession::enter()?;
+    let stdout = std::io::stdout();
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(config, metrics, health_status);
-    app.proxy_running = crate::process::daemon::is_proxy_running().unwrap_or(false);
+    {
+        let config = app.config.read().await;
+        app.proxy_running =
+            crate::proxy::is_proxy_reachable(&config.proxy_host, config.proxy_port).await;
+    }
     app.refresh_profiles().await;
 
     log::info!("Claudex dashboard started");
@@ -503,9 +523,7 @@ pub async fn run_tui(
 
         // Check if we should exit TUI for launch
         if let Some(profile_name) = app.launch_profile.take() {
-            disable_raw_mode()?;
-            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-            terminal.show_cursor()?;
+            terminal_session.restore()?;
 
             let config = app.config.read().await;
             if let Some(profile) = config.find_profile(&profile_name) {
@@ -513,15 +531,31 @@ pub async fn run_tui(
                 let config_snapshot = config.clone();
                 drop(config);
 
-                if !crate::process::daemon::is_proxy_running().unwrap_or(false) {
+                if !crate::proxy::is_proxy_reachable(
+                    &config_snapshot.proxy_host,
+                    config_snapshot.proxy_port,
+                )
+                .await
+                {
                     println!("Starting proxy in background...");
                     let bg_config = config_snapshot.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = crate::proxy::start_proxy(bg_config, None).await {
+                    app.proxy_task = Some(tokio::spawn(async move {
+                        if let Err(e) = crate::proxy::start_embedded_proxy(bg_config, None).await {
                             tracing::error!("proxy failed: {e}");
                         }
-                    });
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    }));
+                    if !crate::proxy::wait_for_proxy(
+                        &config_snapshot.proxy_host,
+                        config_snapshot.proxy_port,
+                        std::time::Duration::from_secs(5),
+                    )
+                    .await
+                    {
+                        if let Some(task) = app.proxy_task.take() {
+                            task.abort();
+                        }
+                        anyhow::bail!("proxy failed to start within 5 seconds");
+                    }
                 }
 
                 crate::process::launch::launch_claude(
@@ -579,7 +613,14 @@ pub async fn run_tui(
             _ = tick.tick() => {
                 // Periodic refresh
                 app.refresh_profiles().await;
-                app.proxy_running = crate::process::daemon::is_proxy_running().unwrap_or(false);
+                if app.last_proxy_check.elapsed() >= std::time::Duration::from_secs(2) {
+                    let (host, port) = {
+                        let config = app.config.read().await;
+                        (config.proxy_host.clone(), config.proxy_port)
+                    };
+                    app.proxy_running = crate::proxy::is_proxy_reachable(&host, port).await;
+                    app.last_proxy_check = Instant::now();
+                }
                 // Clear expired notifications
                 if let Some(ref notif) = app.notification {
                     if notif.is_expired() {
@@ -590,9 +631,10 @@ pub async fn run_tui(
         }
     }
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    if let Some(task) = app.proxy_task.take() {
+        task.abort();
+    }
+    terminal_session.restore()?;
 
     Ok(())
 }
@@ -625,24 +667,49 @@ async fn handle_async_actions(app: &mut App) -> Result<()> {
             }
         }
         AsyncAction::SaveProfile(form) => {
-            let profile_config = form.to_profile_config();
-            let name = profile_config.name.clone();
             let mut config = app.config.write().await;
+            let existing = form
+                .original_name
+                .as_deref()
+                .and_then(|name| config.find_profile(name))
+                .cloned();
+            let profile_config = form.to_profile_config(existing.as_ref());
+            let name = profile_config.name.clone();
+            let original_profiles = config.profiles.clone();
 
             if form.is_edit {
-                // Remove original
-                if let Some(orig) = &form.original_name {
-                    config.profiles.retain(|p| p.name != *orig);
+                let original_name = form.original_name.as_deref().unwrap_or_default();
+                if config
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.name == name && profile.name != original_name)
+                {
+                    app.notification = Some(Notification::error(format!(
+                        "Profile '{name}' already exists"
+                    )));
+                    return Ok(());
+                }
+                if let Some(position) = form
+                    .original_name
+                    .as_deref()
+                    .and_then(|original| config.profiles.iter().position(|p| p.name == original))
+                {
+                    config.profiles[position] = profile_config;
+                } else {
+                    app.notification =
+                        Some(Notification::error("Original profile no longer exists"));
+                    return Ok(());
                 }
             } else if config.find_profile(&name).is_some() {
                 app.notification = Some(Notification::error(format!(
                     "Profile '{name}' already exists"
                 )));
                 return Ok(());
+            } else {
+                config.profiles.push(profile_config);
             }
-
-            config.profiles.push(profile_config);
             if let Err(e) = config.save() {
+                config.profiles = original_profiles;
                 app.notification = Some(Notification::error(format!("Save failed: {e}")));
             } else {
                 let verb = if form.is_edit { "Updated" } else { "Added" };
@@ -654,8 +721,10 @@ async fn handle_async_actions(app: &mut App) -> Result<()> {
         }
         AsyncAction::DeleteProfile(name) => {
             let mut config = app.config.write().await;
+            let original_profiles = config.profiles.clone();
             config.profiles.retain(|p| p.name != name);
             if let Err(e) = config.save() {
+                config.profiles = original_profiles;
                 app.notification = Some(Notification::error(format!("Delete failed: {e}")));
             } else {
                 app.notification = Some(Notification::success(format!("Deleted profile '{name}'")));
@@ -666,22 +735,32 @@ async fn handle_async_actions(app: &mut App) -> Result<()> {
         }
         AsyncAction::StartProxy => {
             let config = app.config.read().await.clone();
-            tokio::spawn(async move {
-                if let Err(e) = crate::proxy::start_proxy(config, None).await {
+            if crate::proxy::is_proxy_reachable(&config.proxy_host, config.proxy_port).await {
+                app.proxy_running = true;
+                app.notification = Some(Notification::info("Proxy is already running"));
+                return Ok(());
+            }
+            let host = config.proxy_host.clone();
+            let port = config.proxy_port;
+            app.proxy_task = Some(tokio::spawn(async move {
+                if let Err(e) = crate::proxy::start_embedded_proxy(config, None).await {
                     tracing::error!("proxy failed: {e}");
                 }
-            });
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            app.proxy_running = crate::process::daemon::is_proxy_running().unwrap_or(false);
+            }));
+            app.proxy_running =
+                crate::proxy::wait_for_proxy(&host, port, std::time::Duration::from_secs(5)).await;
             if app.proxy_running {
                 app.notification = Some(Notification::success("Proxy started"));
                 log::info!("Proxy started");
             } else {
+                if let Some(task) = app.proxy_task.take() {
+                    task.abort();
+                }
                 app.notification = Some(Notification::error("Proxy failed to start"));
                 log::error!("Proxy failed to start");
             }
         }
-        AsyncAction::StopProxy => match crate::process::daemon::stop_proxy() {
+        AsyncAction::StopProxy => match stop_proxy_for_dashboard(app).await {
             Ok(()) => {
                 app.proxy_running = false;
                 app.notification = Some(Notification::success("Proxy stopped"));
@@ -695,4 +774,111 @@ async fn handle_async_actions(app: &mut App) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn stop_proxy_for_dashboard(app: &mut App) -> Result<()> {
+    if let Some(task) = app.proxy_task.take() {
+        task.abort();
+        let _ = task.await;
+        return Ok(());
+    }
+    crate::process::daemon::stop_proxy()
+}
+
+/// Restores the user's terminal on normal exit, errors, and unwinding panics.
+/// Without this guard, any `?` inside the event loop can leave raw mode and the
+/// alternate screen active, which looks like a terminal crash.
+struct TerminalSession {
+    active: bool,
+}
+
+impl TerminalSession {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = std::io::stdout();
+        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+            let _ = disable_raw_mode();
+            return Err(error.into());
+        }
+        Ok(Self { active: true })
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+
+        let raw_result = disable_raw_mode();
+        let mut stdout = std::io::stdout();
+        let screen_result = execute!(stdout, LeaveAlternateScreen, Show);
+        self.active = false;
+        raw_result?;
+        screen_result?;
+        Ok(())
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn form_field_cursor_stays_on_utf8_boundaries() {
+        let mut field = FormField::new("Name", FieldKind::Text, "aé中");
+        assert_eq!(field.cursor_pos, field.value.len());
+
+        field.move_cursor_left();
+        assert_eq!(field.cursor_pos, "aé".len());
+        field.move_cursor_left();
+        assert_eq!(field.cursor_pos, "a".len());
+
+        field.insert_char('🙂');
+        assert_eq!(field.value, "a🙂é中");
+        assert_eq!(field.cursor_pos, "a🙂".len());
+
+        field.delete_char();
+        assert_eq!(field.value, "aé中");
+        assert_eq!(field.cursor_pos, "a".len());
+
+        field.move_cursor_right();
+        assert_eq!(field.cursor_pos, "aé".len());
+    }
+
+    #[test]
+    fn editing_profile_preserves_advanced_and_secret_fields() {
+        let existing = ProfileConfig {
+            name: "ultracode".to_string(),
+            base_url: "https://old.example".to_string(),
+            api_key: "saved-secret".to_string(),
+            api_key_keyring: Some("saved-keyring".to_string()),
+            default_model: "chat-model".to_string(),
+            auth_type: AuthType::OAuth,
+            oauth_provider: Some(crate::oauth::OAuthProvider::Openai),
+            model_routes: std::collections::HashMap::from([(
+                "claude-model".to_string(),
+                "anthropic".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let mut form = ProfileForm::from_profile(&existing);
+        form.fields[FIELD_API_KEY].value.clear();
+        form.fields[FIELD_BASE_URL].value = "https://new.example".to_string();
+
+        let updated = form.to_profile_config(Some(&existing));
+
+        assert_eq!(updated.base_url, "https://new.example");
+        assert_eq!(updated.api_key, "saved-secret");
+        assert_eq!(updated.api_key_keyring.as_deref(), Some("saved-keyring"));
+        assert_eq!(updated.auth_type, AuthType::OAuth);
+        assert_eq!(
+            updated.model_routes.get("claude-model").map(String::as_str),
+            Some("anthropic")
+        );
+    }
 }

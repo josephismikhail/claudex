@@ -2,8 +2,11 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::config::{ClaudexConfig, HyperlinksConfig, ProfileConfig};
+#[cfg(unix)]
+use crate::config::HyperlinksConfig;
+use crate::config::{ClaudexConfig, ProfileConfig};
 use crate::oauth::{AuthType, OAuthProvider};
+#[cfg(unix)]
 use crate::terminal;
 
 pub fn launch_claude(
@@ -60,13 +63,13 @@ pub fn launch_claude(
 
     // 模型 slot 映射 → Claude Code 的 /model 切换
     if let Some(ref h) = profile.models.haiku {
-        cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", h);
+        cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", config.resolve_model(h));
     }
     if let Some(ref s) = profile.models.sonnet {
-        cmd.env("ANTHROPIC_DEFAULT_SONNET_MODEL", s);
+        cmd.env("ANTHROPIC_DEFAULT_SONNET_MODEL", config.resolve_model(s));
     }
     if let Some(ref o) = profile.models.opus {
-        cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", o);
+        cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", config.resolve_model(o));
     }
 
     for (k, v) in &profile.extra_env {
@@ -92,9 +95,15 @@ pub fn launch_claude(
     #[cfg(unix)]
     let use_pty = !is_noninteractive && should_use_pty(&config.hyperlinks, hyperlinks_override);
     #[cfg(not(unix))]
-    let use_pty = false;
+    let use_pty = {
+        let _ = hyperlinks_override;
+        false
+    };
 
+    #[cfg(unix)]
     let mut resume_session_id: Option<String> = None;
+    #[cfg(not(unix))]
+    let resume_session_id: Option<String> = None;
 
     if use_pty {
         #[cfg(unix)]
@@ -238,5 +247,58 @@ mod tests {
         let args = vec!["--resume".to_string(), "old-id".to_string()];
         let hint = build_resume_hint("p", "new-id", &args);
         assert_eq!(hint, "claudex run p --resume new-id");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_launches_native_windows_command_with_proxy_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-claude.cmd");
+        let output = dir.path().join("child-output.txt");
+        std::fs::write(
+            &script,
+            format!(
+                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo ARGS=%*\r\n)\r\n",
+                output.display()
+            ),
+        )
+        .unwrap();
+
+        let config = ClaudexConfig {
+            claude_binary: script.to_string_lossy().into_owned(),
+            proxy_port: 15432,
+            model_aliases: std::collections::HashMap::from([(
+                "fast".to_string(),
+                "provider-fast-model".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let profile = ProfileConfig {
+            name: "windows-test".to_string(),
+            provider_type: crate::config::ProviderType::OpenAICompatible,
+            base_url: "https://example.invalid/v1".to_string(),
+            default_model: "test-model".to_string(),
+            models: crate::config::ProfileModels {
+                haiku: Some("fast".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        launch_claude(
+            &config,
+            &profile,
+            None,
+            &["--print".to_string(), "hello".to_string()],
+            false,
+        )
+        .unwrap();
+
+        let child_output = std::fs::read_to_string(output).unwrap();
+        assert!(child_output.contains("BASE=http://127.0.0.1:15432/proxy/windows-test"));
+        assert!(child_output.contains("TOKEN=claudex-passthrough"));
+        assert!(child_output.contains("MODEL=test-model"));
+        assert!(child_output.contains("HAIKU=provider-fast-model"));
+        assert!(child_output.contains("ARGS=--no-chrome --print hello"));
     }
 }

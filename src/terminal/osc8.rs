@@ -12,6 +12,13 @@ static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
 static ABS_PATH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/[\w./_-]+\.\w+(?::\d+(?::\d+)?)?").unwrap());
 
+static WINDOWS_ABS_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // Windows temp/workspace paths commonly contain spaces, tildes, and
+    // Unicode. Match everything Windows permits in a path segment while
+    // excluding reserved characters and the colon used by :line:column.
+    Regex::new(r#"[A-Za-z]:[\\/][^\r\n\t<>\"|?*:]+\.[A-Za-z0-9_]+(?::\d+(?::\d+)?)?"#).unwrap()
+});
+
 static REL_PATH_DOTSLASH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:\.\./|\./)([\w./_-]+)(?::\d+(?::\d+)?)?").unwrap());
 
@@ -56,13 +63,41 @@ fn wrap_osc8(uri: &str, display_text: &str) -> String {
 
 /// Convert a file path (possibly with :line:col suffix) to a file:// URI.
 fn file_path_to_uri(path: &str, cwd: &Path) -> String {
-    let file_part = path.split(':').next().unwrap_or(path);
-    let abs = if file_part.starts_with('/') {
+    let file_part = strip_location_suffix(path);
+    let abs = if Path::new(file_part).is_absolute() {
         PathBuf::from(file_part)
     } else {
         cwd.join(file_part)
     };
-    format!("file://{}", abs.display())
+
+    if let Ok(url) = url::Url::from_file_path(&abs) {
+        return url.into();
+    }
+
+    // Fallback for synthetic paths used in diagnostics/tests. File URIs always
+    // use forward slashes, including on Windows.
+    let normalized = abs.to_string_lossy().replace('\\', "/");
+    if normalized.starts_with('/') {
+        format!("file://{normalized}")
+    } else {
+        format!("file:///{normalized}")
+    }
+}
+
+fn strip_location_suffix(path: &str) -> &str {
+    let mut end = path.len();
+    for _ in 0..2 {
+        let candidate = &path[..end];
+        let Some(separator) = candidate.rfind(':') else {
+            break;
+        };
+        let suffix = &candidate[separator + 1..];
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            break;
+        }
+        end = separator;
+    }
+    &path[..end]
 }
 
 /// Link detection engine. Processes lines of terminal output and wraps
@@ -85,7 +120,7 @@ impl LinkDetector {
         if let Some(&cached) = self.file_cache.get(file_part) {
             return cached;
         }
-        let abs = if file_part.starts_with('/') {
+        let abs = if Path::new(file_part).is_absolute() {
             PathBuf::from(file_part)
         } else {
             self.cwd.join(file_part)
@@ -145,7 +180,20 @@ impl LinkDetector {
                 continue;
             }
             let path_str = m.as_str();
-            let file_part = path_str.split(':').next().unwrap_or(path_str);
+            let file_part = strip_location_suffix(path_str);
+            if self.check_file_exists(file_part) {
+                let uri = file_path_to_uri(path_str, &self.cwd);
+                replacements.push((m.start(), m.end(), wrap_osc8(&uri, path_str)));
+            }
+        }
+
+        // 2b. Windows absolute paths (C:\\dir\\file.rs:42)
+        for m in WINDOWS_ABS_PATH_RE.find_iter(text) {
+            if self.overlaps(&replacements, m.start(), m.end()) {
+                continue;
+            }
+            let path_str = m.as_str();
+            let file_part = strip_location_suffix(path_str);
             if self.check_file_exists(file_part) {
                 let uri = file_path_to_uri(path_str, &self.cwd);
                 replacements.push((m.start(), m.end(), wrap_osc8(&uri, path_str)));
@@ -158,7 +206,7 @@ impl LinkDetector {
                 continue;
             }
             let path_str = m.as_str();
-            let file_part = path_str.split(':').next().unwrap_or(path_str);
+            let file_part = strip_location_suffix(path_str);
             // Resolve ./ or ../ relative to cwd
             let resolved = self.cwd.join(file_part);
             let clean_part = resolved.to_string_lossy();
@@ -174,7 +222,7 @@ impl LinkDetector {
                 continue;
             }
             let path_str = m.as_str();
-            let file_part = path_str.split(':').next().unwrap_or(path_str);
+            let file_part = strip_location_suffix(path_str);
             if self.check_file_exists(file_part) {
                 let uri = file_path_to_uri(path_str, &self.cwd);
                 replacements.push((m.start(), m.end(), wrap_osc8(&uri, path_str)));
@@ -264,7 +312,8 @@ mod tests {
 
     #[test]
     fn test_absolute_path_existing_file() {
-        let dir = std::env::temp_dir().join("claudex_test_osc8");
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("claudex test~osc8");
         fs::create_dir_all(&dir).unwrap();
         let test_file = dir.join("test.rs");
         fs::write(&test_file, "fn main() {}").unwrap();
@@ -275,8 +324,6 @@ mod tests {
         let result = d.enhance_line(&input);
         assert!(result.contains("\x1b]8;;file://"));
         assert!(result.contains("test.rs"));
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -403,13 +450,23 @@ mod tests {
     #[test]
     fn test_file_path_to_uri_relative() {
         let uri = file_path_to_uri("src/main.rs", Path::new("/project"));
-        assert_eq!(uri, "file:///project/src/main.rs");
+        assert!(uri.starts_with("file://"));
+        assert!(uri.replace('\\', "/").ends_with("/project/src/main.rs"));
     }
 
     #[test]
     fn test_file_path_to_uri_with_line() {
         let uri = file_path_to_uri("src/main.rs:42:10", Path::new("/project"));
-        assert_eq!(uri, "file:///project/src/main.rs");
+        assert!(uri.starts_with("file://"));
+        assert!(uri.replace('\\', "/").ends_with("/project/src/main.rs"));
+    }
+
+    #[test]
+    fn test_strip_location_suffix_preserves_windows_drive() {
+        assert_eq!(
+            strip_location_suffix(r"C:\project\src\main.rs:42:10"),
+            r"C:\project\src\main.rs"
+        );
     }
 
     #[test]

@@ -8,25 +8,31 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 ## Install Methods
 
 <Tabs>
+  <TabItem label="PowerShell" icon="terminal">
+    ```powershell
+    irm https://raw.githubusercontent.com/josephismikhail/claudex/main/install.ps1 | iex
+    ```
+    On Windows x64, the installer downloads the release archive, verifies its SHA-256 checksum, installs to `%LOCALAPPDATA%\\Programs\\Claudex\\bin`, and adds that directory to the user `PATH`.
+  </TabItem>
   <TabItem label="One-liner" icon="terminal">
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
     ```
     The install script auto-detects your OS and architecture, downloads the latest release from GitHub, and installs to `~/.local/bin/claudex`.
 
     Override the install directory:
     ```bash
-    CLAUDEX_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
+    CLAUDEX_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
     ```
   </TabItem>
   <TabItem label="Cargo" icon="seti:rust">
     ```bash
-    cargo install --git https://github.com/StringKe/claudex
+    cargo install --git https://github.com/josephismikhail/claudex
     ```
     Requires the Rust toolchain. The binary will be installed to `~/.cargo/bin/claudex`.
   </TabItem>
   <TabItem label="GitHub Releases" icon="github">
-    Download the pre-built binary for your platform from [GitHub Releases](https://github.com/StringKe/claudex/releases).
+    Download the pre-built binary for your platform from [GitHub Releases](https://github.com/josephismikhail/claudex/releases).
 
     Available targets:
     - `x86_64-unknown-linux-gnu`

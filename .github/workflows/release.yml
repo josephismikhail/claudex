@@ -59,6 +59,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -81,27 +84,50 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
-        shell: bash
+      - name: Build with cross
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Build native
+        if: matrix.cross == false
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package Unix
+        if: runner.os != 'Windows'
         env:
           TAG: ${{ needs.create-release.outputs.tag }}
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../claudex-${TAG}-${{ matrix.target }}.tar.gz claudex
 
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          $asset = "claudex-$env:TAG-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/claudex.exe" -DestinationPath $asset
+
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        env:
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          $extension = if ($IsWindows) { "zip" } else { "tar.gz" }
+          $asset = "claudex-$env:TAG-${{ matrix.target }}.$extension"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+          "$hash  $asset" | Set-Content -NoNewline -LiteralPath "$asset.sha256"
+
       - name: Upload
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.create-release.outputs.tag }}
-        run: gh release upload "$TAG" claudex-${TAG}-${{ matrix.target }}.tar.gz
+        run: |
+          $extension = if ($IsWindows) { "zip" } else { "tar.gz" }
+          $asset = "claudex-$env:TAG-${{ matrix.target }}.$extension"
+          gh release upload $env:TAG $asset "$asset.sha256"
 
   publish-release:
     name: Publish Release

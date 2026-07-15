@@ -157,6 +157,31 @@ Compatible providers: **ChatGPT/Codex subscriptions** (via Codex CLI)
 | `strip_params` | `"auto"` | `"auto"`, `"none"`, or `["temperature", "top_p"]`. Auto-detects unsupported params (e.g., ChatGPT Codex endpoint) |
 | `[profiles.query_params]` | `{}` | URL query parameters (e.g., Azure `api-version`) |
 | `[profiles.models]` | — | Model slot mapping table (`haiku`, `sonnet`, `opus` fields) |
+| `[profiles.model_routes]` | `{}` | Exact requested model ID to target profile mapping for mixed-provider sessions |
+
+### Mixed-provider model routes
+
+Use `model_routes` when one Claude Code session should use models backed by different providers. Each key is the exact model ID Claude Code sends; each value names another enabled profile that owns the endpoint and credentials for that model.
+
+```toml
+[[profiles]]
+name = "ultracode"
+provider_type = "OpenAIResponses"
+base_url = "https://your-chat-endpoint.example/v1"
+api_key = "YOUR_CHAT_KEY"
+default_model = "chat-model"
+
+[profiles.models]
+haiku = "claude-haiku-model"
+sonnet = "chat-model"
+opus = "claude-opus-model"
+
+[profiles.model_routes]
+"claude-haiku-model" = "anthropic"
+"claude-opus-model" = "anthropic"
+```
+
+Define `anthropic` as a separate enabled profile, then run `claudex config validate`. Calls without a matching route continue through `ultracode`.
 
 ### Interactive Setup
 
@@ -179,6 +204,7 @@ api_key_keyring = "grok-api-key"   # reads from OS keychain
 ```
 
 Supported backends:
+- **Windows**: Credential Manager
 - **macOS**: Keychain
 - **Linux**: Secret Service (GNOME Keyring / KDE Wallet)
 
@@ -314,6 +340,6 @@ claudex sets list
 
 ## Full Example
 
-See [`config.example.toml`](https://github.com/StringKe/claudex/blob/main/config.example.toml) for a complete configuration file with all providers and options.
+See [`config.example.toml`](https://github.com/josephismikhail/claudex/blob/main/config.example.toml) for a complete configuration file with all providers and options.
 
 For step-by-step setup instructions for each provider (including API key links and OAuth flows), see the [Provider Setup Guide](/en/guides/provider-setup/).

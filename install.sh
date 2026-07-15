@@ -3,7 +3,7 @@
 # Supports: macOS (Intel/Apple Silicon), Linux (x86_64/aarch64), Ubuntu, CentOS, Alpine
 set -e
 
-REPO="StringKe/claudex"
+REPO="josephismikhail/claudex"
 INSTALL_DIR="${CLAUDEX_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS and architecture

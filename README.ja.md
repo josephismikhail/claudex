@@ -4,10 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/StringKe/claudex/actions/workflows/ci.yml"><img src="https://github.com/StringKe/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://github.com/StringKe/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
-  <a href="https://github.com/StringKe/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StringKe/claudex" alt="License"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://img.shields.io/github/v/release/StringKe/claudex" alt="Latest Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml"><img src="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://github.com/josephismikhail/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/josephismikhail/claudex" alt="License"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://img.shields.io/github/v/release/josephismikhail/claudex" alt="Latest Release"></a>
 </p>
 
 <p align="center">
@@ -50,20 +50,20 @@ Claudex は、[Claude Code](https://docs.anthropic.com/en/docs/claude-code) が�
 
 ```bash
 # ワンライナー（Linux / macOS）
-curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
 
 # ソースからビルド
-cargo install --git https://github.com/StringKe/claudex
+cargo install --git https://github.com/josephismikhail/claudex
 
 # または GitHub Releases からダウンロード
-# https://github.com/StringKe/claudex/releases
+# https://github.com/josephismikhail/claudex/releases
 ```
 
 ### システム要件
 
 - macOS（Intel / Apple Silicon）または Linux（x86_64 / ARM64）
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) がインストール済みであること
-- Windows: [Releases](https://github.com/StringKe/claudex/releases) からビルド済みバイナリをダウンロード
+- Windows: [Releases](https://github.com/josephismikhail/claudex/releases) からビルド済みバイナリをダウンロード
 
 ## クイックスタート
 

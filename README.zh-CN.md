@@ -4,10 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/StringKe/claudex/actions/workflows/ci.yml"><img src="https://github.com/StringKe/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://github.com/StringKe/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
-  <a href="https://github.com/StringKe/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StringKe/claudex" alt="License"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://img.shields.io/github/v/release/StringKe/claudex" alt="Latest Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml"><img src="https://github.com/josephismikhail/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://github.com/josephismikhail/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://github.com/josephismikhail/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/josephismikhail/claudex" alt="License"></a>
+  <a href="https://github.com/josephismikhail/claudex/releases"><img src="https://img.shields.io/github/v/release/josephismikhail/claudex" alt="Latest Release"></a>
 </p>
 
 <p align="center">
@@ -50,20 +50,20 @@ Claudex 是一个统一代理，通过自动协议翻译让 [Claude Code](https:
 
 ```bash
 # 一键安装（Linux / macOS）
-curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
 
 # 从源码构建
-cargo install --git https://github.com/StringKe/claudex
+cargo install --git https://github.com/josephismikhail/claudex
 
 # 或从 GitHub Releases 下载
-# https://github.com/StringKe/claudex/releases
+# https://github.com/josephismikhail/claudex/releases
 ```
 
 ### 系统要求
 
 - macOS（Intel / Apple Silicon）或 Linux（x86_64 / ARM64）
 - 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- Windows：从 [Releases](https://github.com/StringKe/claudex/releases) 下载预构建二进制文件
+- Windows：从 [Releases](https://github.com/josephismikhail/claudex/releases) 下载预构建二进制文件
 
 ## 快速上手
 

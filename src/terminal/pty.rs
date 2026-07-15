@@ -3,6 +3,7 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use nix::poll::{PollFd, PollFlags, PollTimeout};
@@ -20,17 +21,8 @@ pub fn spawn_with_pty(mut cmd: Command, cwd: PathBuf) -> Result<Option<String>> 
     let master_fd = pty.master;
     let slave_fd = pty.slave;
 
-    // Save original terminal settings for restoration
     let stdin = std::io::stdin();
-    let orig_termios = termios::tcgetattr(&stdin).ok();
-
-    // Set stdin to raw mode so keystrokes pass through immediately
-    if let Some(ref orig) = orig_termios {
-        let mut raw = orig.clone();
-        termios::cfmakeraw(&mut raw);
-        termios::tcsetattr(&stdin, termios::SetArg::TCSANOW, &raw)
-            .context("failed to set raw mode")?;
-    }
+    let mut terminal_mode = TerminalModeGuard::enter(&stdin)?;
 
     // Set the PTY slave size to match the real terminal
     sync_winsize(stdin.as_raw_fd(), master_fd.as_raw_fd());
@@ -70,16 +62,16 @@ pub fn spawn_with_pty(mut cmd: Command, cwd: PathBuf) -> Result<Option<String>> 
             drop(slave_fd);
 
             // Set up SIGWINCH handler to sync terminal size
-            setup_sigwinch_handler(stdin.as_raw_fd(), master_fd.as_raw_fd());
+            let sigwinch_handler = setup_sigwinch_handler(stdin.as_raw_fd(), master_fd.as_raw_fd());
 
             // Run the proxy loop
             let (exit_code, resume_session_id) =
                 run_proxy_loop(&master_fd, &stdin, &mut LinkDetector::new(cwd));
 
-            // Restore terminal settings
-            if let Some(ref orig) = orig_termios {
-                termios::tcsetattr(&stdin, termios::SetArg::TCSANOW, orig).ok();
+            if let Some(handler) = sigwinch_handler {
+                signal_hook::low_level::unregister(handler);
             }
+            terminal_mode.restore();
 
             // Wait for child and propagate exit code
             match nix::sys::wait::waitpid(child, None) {
@@ -125,9 +117,8 @@ fn run_proxy_loop_inner(
 
     let mut stdout = std::io::stdout().lock();
     let mut read_buf = [0u8; 4096];
-    let mut line_buf = String::new();
-    // 保留跨 read 边界的不完整 UTF-8 尾部字节（最多 3 字节）
-    let mut utf8_residual = Vec::with_capacity(3);
+    let mut pending_output = Vec::with_capacity(4096);
+    let mut last_output_flush = Instant::now();
 
     loop {
         let mut fds = [
@@ -137,12 +128,14 @@ fn run_proxy_loop_inner(
 
         match nix::poll::poll(&mut fds, PollTimeout::from(50u16)) {
             Ok(0) => {
-                // Timeout: flush any incomplete line buffer to avoid display lag
-                if !line_buf.is_empty() {
-                    let enhanced = detector.enhance_line(&line_buf);
-                    write!(stdout, "{enhanced}")?;
+                // A terminal control stream is not line-oriented. Flush an
+                // incomplete fragment byte-for-byte rather than attempting to
+                // rewrite it, which could split an ANSI escape sequence.
+                if !pending_output.is_empty() {
+                    stdout.write_all(&pending_output)?;
                     stdout.flush()?;
-                    line_buf.clear();
+                    pending_output.clear();
+                    last_output_flush = Instant::now();
                 }
                 continue;
             }
@@ -169,41 +162,28 @@ fn run_proxy_loop_inner(
                 match nix::unistd::read(master_borrowed, &mut read_buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        // 将上次残留字节拼接到本次数据前面
-                        let mut combined;
-                        let data: &[u8] = if utf8_residual.is_empty() {
-                            &read_buf[..n]
-                        } else {
-                            combined = std::mem::take(&mut utf8_residual);
-                            combined.extend_from_slice(&read_buf[..n]);
-                            &combined
-                        };
+                        pending_output.extend_from_slice(&read_buf[..n]);
+                        let wrote_lines = write_complete_lines(
+                            &mut pending_output,
+                            &mut stdout,
+                            detector,
+                            resume_session_id,
+                        )?;
 
-                        // 找到最后一个完整 UTF-8 字符的边界
-                        let valid_end = find_utf8_safe_end(data);
-
-                        if let Ok(chunk) = std::str::from_utf8(&data[..valid_end]) {
-                            line_buf.push_str(chunk);
+                        // Sustained full-screen output can keep poll() from
+                        // ever timing out. Bound both memory and latency even
+                        // in that case, and preserve the raw terminal stream.
+                        if pending_output.len() >= MAX_PENDING_OUTPUT_BYTES
+                            || last_output_flush.elapsed() >= OUTPUT_FLUSH_INTERVAL
+                        {
+                            stdout.write_all(&pending_output)?;
+                            pending_output.clear();
+                            last_output_flush = Instant::now();
                         }
-
-                        // 保存不完整的 UTF-8 尾部字节
-                        if valid_end < data.len() {
-                            utf8_residual.extend_from_slice(&data[valid_end..]);
+                        if wrote_lines {
+                            stdout.flush()?;
+                            last_output_flush = Instant::now();
                         }
-
-                        // Process complete lines
-                        while let Some(pos) = line_buf.find('\n') {
-                            let line = line_buf[..pos].to_string();
-                            line_buf = line_buf[pos + 1..].to_string();
-
-                            // 检测 `claude --resume <session-id>`
-                            detect_resume_session(&line, resume_session_id);
-
-                            let enhanced = detector.enhance_line(&line);
-                            writeln!(stdout, "{enhanced}")?;
-                        }
-
-                        stdout.flush()?;
                     }
                     Err(nix::errno::Errno::EIO) => break, // PTY closed
                     Err(e) => return Err(e.into()),
@@ -212,10 +192,11 @@ fn run_proxy_loop_inner(
 
             if revents.contains(PollFlags::POLLHUP) {
                 // Child exited: flush remaining buffer
-                if !line_buf.is_empty() {
-                    detect_resume_session(&line_buf, resume_session_id);
-                    let enhanced = detector.enhance_line(&line_buf);
-                    write!(stdout, "{enhanced}")?;
+                if !pending_output.is_empty() {
+                    if let Ok(text) = std::str::from_utf8(&pending_output) {
+                        detect_resume_session(text, resume_session_id);
+                    }
+                    stdout.write_all(&pending_output)?;
                     stdout.flush()?;
                 }
                 break;
@@ -224,6 +205,102 @@ fn run_proxy_loop_inner(
     }
 
     Ok(())
+}
+
+const MAX_PENDING_OUTPUT_BYTES: usize = 64 * 1024;
+const OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+
+fn write_complete_lines<W: Write>(
+    pending: &mut Vec<u8>,
+    stdout: &mut W,
+    detector: &mut LinkDetector,
+    resume_session_id: &mut Option<String>,
+) -> Result<bool> {
+    let mut consumed = 0;
+    let mut wrote = false;
+
+    while let Some(relative_newline) = pending[consumed..].iter().position(|byte| *byte == b'\n') {
+        let newline = consumed + relative_newline;
+        write_terminal_line(
+            stdout,
+            &pending[consumed..=newline],
+            detector,
+            resume_session_id,
+        )?;
+        consumed = newline + 1;
+        wrote = true;
+    }
+
+    if consumed > 0 {
+        pending.drain(..consumed);
+    }
+    Ok(wrote)
+}
+
+fn write_terminal_line<W: Write>(
+    stdout: &mut W,
+    line_with_newline: &[u8],
+    detector: &mut LinkDetector,
+    resume_session_id: &mut Option<String>,
+) -> Result<()> {
+    let mut content_end = line_with_newline.len().saturating_sub(1);
+    let has_carriage_return = content_end > 0 && line_with_newline[content_end - 1] == b'\r';
+    if has_carriage_return {
+        content_end -= 1;
+    }
+    let content = &line_with_newline[..content_end];
+
+    // Only rewrite plain UTF-8 lines. Any escape/control sequence belongs to a
+    // terminal renderer and must pass through byte-for-byte.
+    let safe_plain_text = !content
+        .iter()
+        .any(|byte| *byte == 0x1b || (*byte < 0x20 && *byte != b'\t') || *byte == 0x7f);
+    if let Ok(text) = std::str::from_utf8(content) {
+        // Resume hints are often colorized. Inspect the text independently of
+        // whether it is safe to enhance, then preserve ANSI-bearing lines.
+        detect_resume_session(text, resume_session_id);
+        if safe_plain_text {
+            let enhanced = detector.enhance_line(text);
+            stdout.write_all(enhanced.as_bytes())?;
+            if has_carriage_return {
+                stdout.write_all(b"\r")?;
+            }
+            stdout.write_all(b"\n")?;
+            return Ok(());
+        }
+    }
+
+    stdout.write_all(line_with_newline)?;
+    Ok(())
+}
+
+struct TerminalModeGuard {
+    original: Option<termios::Termios>,
+}
+
+impl TerminalModeGuard {
+    fn enter(stdin: &std::io::Stdin) -> Result<Self> {
+        let original = termios::tcgetattr(stdin).ok();
+        if let Some(ref original_mode) = original {
+            let mut raw = original_mode.clone();
+            termios::cfmakeraw(&mut raw);
+            termios::tcsetattr(stdin, termios::SetArg::TCSANOW, &raw)
+                .context("failed to set raw mode")?;
+        }
+        Ok(Self { original })
+    }
+
+    fn restore(&mut self) {
+        if let Some(original) = self.original.take() {
+            let _ = termios::tcsetattr(std::io::stdin(), termios::SetArg::TCSANOW, &original);
+        }
+    }
+}
+
+impl Drop for TerminalModeGuard {
+    fn drop(&mut self) {
+        self.restore();
+    }
 }
 
 /// 从输出行中检测 `claude --resume <session-id>` 模式，提取 session ID。
@@ -334,12 +411,13 @@ fn sync_winsize(stdin_fd: i32, master_fd: i32) {
 }
 
 /// Set up a SIGWINCH handler that syncs terminal size to the PTY.
-fn setup_sigwinch_handler(stdin_fd: i32, master_fd: i32) {
-    let _ = unsafe {
+fn setup_sigwinch_handler(stdin_fd: i32, master_fd: i32) -> Option<signal_hook::SigId> {
+    unsafe {
         signal_hook::low_level::register(signal_hook::consts::SIGWINCH, move || {
             sync_winsize(stdin_fd, master_fd);
         })
-    };
+        .ok()
+    }
 }
 
 #[cfg(test)]
@@ -503,5 +581,33 @@ mod tests {
         // "hi" + incomplete "中" (2 of 3 bytes)
         let data = &[b'h', b'i', 0xE4, 0xB8];
         assert_eq!(find_utf8_safe_end(data), 2);
+    }
+
+    #[test]
+    fn test_complete_lines_are_drained_without_copying_partial_tail() {
+        let mut pending = b"first line\nsecond line\npartial".to_vec();
+        let mut output = Vec::new();
+        let mut detector = LinkDetector::new(std::env::current_dir().unwrap());
+        let mut session_id = None;
+
+        assert!(
+            write_complete_lines(&mut pending, &mut output, &mut detector, &mut session_id)
+                .unwrap()
+        );
+        assert_eq!(output, b"first line\nsecond line\n");
+        assert_eq!(pending, b"partial");
+    }
+
+    #[test]
+    fn test_ansi_resume_line_is_detected_and_preserved_byte_for_byte() {
+        let line = b"\x1b[32mclaude --resume abc-123\x1b[0m\r\n";
+        let mut output = Vec::new();
+        let mut detector = LinkDetector::new(std::env::current_dir().unwrap());
+        let mut session_id = None;
+
+        write_terminal_line(&mut output, line, &mut detector, &mut session_id).unwrap();
+
+        assert_eq!(output, line);
+        assert_eq!(session_id.as_deref(), Some("abc-123"));
     }
 }
