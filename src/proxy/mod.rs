@@ -377,9 +377,8 @@ mod tests {
         proxy.abort();
 
         assert_eq!(response["model"], crate::accounts::ONBOARDING_MODEL);
-        assert!(response["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("/models"));
+        let text = response["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("claudex models open"));
+        assert!(!text.contains("Run /models"));
     }
 }
