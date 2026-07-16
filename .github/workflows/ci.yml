@@ -43,6 +43,20 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+      - name: Windows PowerShell 5.1 installer smoke test
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            throw "Expected Windows PowerShell 5.1, found $($PSVersionTable.PSVersion)"
+          }
+          $installDir = Join-Path $env:RUNNER_TEMP "claudex-installer-smoke"
+          .\install.ps1 -InstallDir $installDir -NoPathUpdate
+          $version = & (Join-Path $installDir "claudex.exe") --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^claudex ') {
+            throw "Installed binary failed its version check: $version"
+          }
+
   website:
     name: Website
     runs-on: ubuntu-latest
