@@ -296,20 +296,6 @@ enabled = false
 ### OAuth Profile Examples
 
 ```toml
-# Claude Max/Pro (local gateway reuses Claude Code OAuth from ~/.claude)
-[[profiles]]
-name = "claude-max"
-provider_type = "DirectAnthropic"
-base_url = "https://api.anthropic.com"
-default_model = "sonnet"
-auth_type = "oauth"
-oauth_provider = "claude"
-
-[profiles.models]
-haiku = "haiku"
-sonnet = "sonnet"
-opus = "opus"
-
 # ChatGPT/Codex subscription (OpenAIResponses)
 [[profiles]]
 name = "codex-sub"
@@ -371,7 +357,7 @@ oauth_provider = "gitlab"
 ```
 
 <Aside type="caution">
-  Every OAuth provider uses the local gateway. Claude credentials come from Claude Code and ChatGPT credentials come from Codex; both can participate in `model_routes` inside one Claude Code session.
+  Claude Free, Pro, and Max OAuth credentials cannot be routed by Claudex. Connect Anthropic with a Console API key from `/models` instead.
 </Aside>
 
 ## Smart Router

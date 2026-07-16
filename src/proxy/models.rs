@@ -66,7 +66,11 @@ fn models_for_profile(config: &ClaudexConfig, profile: &ProfileConfig) -> Vec<Va
     let mut seen = HashSet::new();
     candidates
         .into_iter()
-        .filter(|model| !model.is_empty() && seen.insert(model.clone()))
+        .filter(|model| {
+            !model.is_empty()
+                && model != crate::accounts::ONBOARDING_MODEL
+                && seen.insert(model.clone())
+        })
         .filter_map(|model| {
             let target = profile
                 .model_routes
@@ -187,5 +191,18 @@ mod tests {
 
         let models = models_for_profile(&config, &config.profiles[0]);
         assert!(!models.iter().any(|model| model["id"] == "disabled-model"));
+    }
+
+    #[test]
+    fn empty_runtime_catalog_does_not_expose_onboarding_as_a_provider_model() {
+        let mut config = ClaudexConfig::default();
+        crate::accounts::apply_store_to_config(
+            &mut config,
+            &crate::accounts::AccountStore::default(),
+        );
+        let root = config
+            .find_profile(crate::accounts::SESSION_PROFILE_NAME)
+            .unwrap();
+        assert!(models_for_profile(&config, root).is_empty());
     }
 }

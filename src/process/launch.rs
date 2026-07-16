@@ -34,13 +34,23 @@ pub fn launch_claude(
     // 不设 CLAUDE_CONFIG_DIR — 使用全局 ~/.claude，保留用户已有认证和设置。
     // Profile 差异化完全通过环境变量实现。
 
-    // Every profile goes through the local gateway, including Claude
-    // subscriptions. This keeps model_routes active when /model switches
-    // between providers in the same Claude Code session. The placeholder is
-    // accepted only by the loopback proxy and is never forwarded upstream.
+    // Every profile goes through the local gateway. This keeps model_routes
+    // active when /model switches between providers in the same Claude Code
+    // session. The placeholder is accepted only by the loopback proxy and is
+    // never forwarded upstream.
     cmd.env("ANTHROPIC_BASE_URL", &proxy_base)
         .env("ANTHROPIC_AUTH_TOKEN", "claudex-passthrough")
-        .env("ANTHROPIC_MODEL", &model);
+        .env("ANTHROPIC_MODEL", &model)
+        // Claude Code 2.1.129+ uses this opt-in to populate /model from the
+        // local gateway's profile-specific /v1/models endpoint.
+        .env("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1");
+
+    configure_openai_picker_entry(&mut cmd, config, profile);
+
+    // Claude Code can execute the managed `/models` skill with native
+    // PowerShell on Windows instead of requiring the old WSL/Git Bash path.
+    #[cfg(windows)]
+    cmd.env("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1");
 
     if !profile.custom_headers.is_empty() {
         let headers: Vec<String> = profile
@@ -66,13 +76,7 @@ pub fn launch_claude(
     // IDs. Mark ChatGPT subscription slots as effort-capable so /effort and
     // ultracode remain available; the proxy maps the selected level to the
     // Responses API's reasoning.effort field.
-    let is_chatgpt_subscription = profile.auth_type == AuthType::OAuth
-        && profile.oauth_provider.as_ref().is_some_and(|provider| {
-            matches!(
-                provider.normalize(),
-                OAuthProvider::Chatgpt | OAuthProvider::Openai
-            )
-        });
+    let is_chatgpt_subscription = profile_uses_chatgpt(config, profile);
     if is_chatgpt_subscription {
         const CAPABILITIES: &str = "effort,xhigh_effort,max_effort";
         cmd.env(
@@ -171,6 +175,67 @@ pub fn launch_claude(
     Ok(())
 }
 
+fn profile_uses_chatgpt(config: &ClaudexConfig, profile: &ProfileConfig) -> bool {
+    is_chatgpt_profile(profile)
+        || profile
+            .model_routes
+            .values()
+            .any(|target| config.find_profile(target).is_some_and(is_chatgpt_profile))
+}
+
+fn is_chatgpt_profile(profile: &ProfileConfig) -> bool {
+    profile.auth_type == AuthType::OAuth
+        && profile.oauth_provider.as_ref().is_some_and(|provider| {
+            matches!(
+                provider.normalize(),
+                OAuthProvider::Chatgpt | OAuthProvider::Openai
+            )
+        })
+}
+
+fn configure_openai_picker_entry(
+    command: &mut Command,
+    config: &ClaudexConfig,
+    profile: &ProfileConfig,
+) {
+    // Claude Code's gateway discovery intentionally filters out model IDs
+    // that do not begin with "claude" or "anthropic". Its documented custom
+    // entry is therefore used for the connected ChatGPT model. Claudex's
+    // account-first flow currently exposes one OpenAI model, so a single
+    // custom entry covers the whole managed OpenAI account without inventing
+    // fake upstream model IDs.
+    let mut models: Vec<&str> = Vec::new();
+    if is_chatgpt_profile(profile) && !profile.default_model.is_empty() {
+        models.push(profile.default_model.as_str());
+    }
+    models.extend(profile.model_routes.iter().filter_map(|(model, target)| {
+        config
+            .find_profile(target)
+            .filter(|target_profile| is_chatgpt_profile(target_profile))
+            .map(|_| model.as_str())
+    }));
+    models.sort_unstable();
+    let Some(model) = models.first() else {
+        return;
+    };
+
+    const CAPABILITIES: &str = "effort,xhigh_effort,max_effort";
+    command
+        .env("ANTHROPIC_CUSTOM_MODEL_OPTION", model)
+        .env(
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+            format!("{model} via OpenAI"),
+        )
+        .env(
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
+            "OpenAI through the local Claudex gateway",
+        )
+        .env(
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        );
+}
+
 /// 在 Claude Code 退出后追加 claudex resume 命令提示
 fn print_claudex_resume_hint(profile_name: &str, session_id: &str, extra_args: &[String]) {
     let hint = build_resume_hint(profile_name, session_id, extra_args);
@@ -220,6 +285,62 @@ fn should_use_pty(config_hyperlinks: &HyperlinksConfig, cli_override: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn command_env(command: &Command, name: &str) -> Option<String> {
+        command.get_envs().find_map(|(key, value)| {
+            if key == name {
+                value.map(|value| value.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+    }
+
+    #[test]
+    fn managed_openai_account_gets_picker_entry_and_effort_capabilities() {
+        let mut store = crate::accounts::AccountStore::default();
+        store.upsert(crate::accounts::AccountProvider::Openai);
+        let mut config = ClaudexConfig::default();
+        crate::accounts::apply_store_to_config(&mut config, &store);
+        let profile = config
+            .find_profile(crate::accounts::SESSION_PROFILE_NAME)
+            .unwrap();
+        let mut command = Command::new("claude");
+
+        configure_openai_picker_entry(&mut command, &config, profile);
+
+        assert!(profile_uses_chatgpt(&config, profile));
+        assert_eq!(
+            command_env(&command, "ANTHROPIC_CUSTOM_MODEL_OPTION").as_deref(),
+            Some("gpt-5.6")
+        );
+        assert_eq!(
+            command_env(
+                &command,
+                "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES"
+            )
+            .as_deref(),
+            Some("effort,xhigh_effort,max_effort")
+        );
+    }
+
+    #[test]
+    fn empty_session_does_not_advertise_an_unconnected_openai_model() {
+        let mut config = ClaudexConfig::default();
+        crate::accounts::apply_store_to_config(
+            &mut config,
+            &crate::accounts::AccountStore::default(),
+        );
+        let profile = config
+            .find_profile(crate::accounts::SESSION_PROFILE_NAME)
+            .unwrap();
+        let mut command = Command::new("claude");
+
+        configure_openai_picker_entry(&mut command, &config, profile);
+
+        assert!(!profile_uses_chatgpt(&config, profile));
+        assert_eq!(command_env(&command, "ANTHROPIC_CUSTOM_MODEL_OPTION"), None);
+    }
 
     #[test]
     fn test_build_resume_hint_no_extra_args() {
@@ -281,7 +402,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo CAPABILITIES=%ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo ARGS=%*\r\n)\r\n",
+                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo CAPABILITIES=%ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES%\r\n  echo DISCOVERY=%CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY%\r\n  echo CUSTOM=%ANTHROPIC_CUSTOM_MODEL_OPTION%\r\n  echo CUSTOM_CAPABILITIES=%ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo POWERSHELL=%CLAUDE_CODE_USE_POWERSHELL_TOOL%\r\n  echo ARGS=%*\r\n)\r\n",
                 output.display()
             ),
         )
@@ -332,10 +453,14 @@ mod tests {
         assert!(child_output.contains("MODEL=test-model"));
         assert!(child_output.contains("HAIKU=provider-fast-model"));
         assert!(child_output.contains("CAPABILITIES=effort,xhigh_effort,max_effort"));
+        assert!(child_output.contains("DISCOVERY=1"));
+        assert!(child_output.contains("CUSTOM=test-model"));
+        assert!(child_output.contains("CUSTOM_CAPABILITIES=effort,xhigh_effort,max_effort"));
         assert!(child_output.contains("PRIVATE=1"));
         assert!(child_output.contains("TELEMETRY=1"));
         assert!(child_output.contains("UPDATES=1"));
         assert!(child_output.contains("OTEL=none"));
+        assert!(child_output.contains("POWERSHELL=1"));
         assert!(child_output.contains("ARGS=--no-chrome --settings"));
         assert!(child_output.contains("skipWebFetchPreflight"));
         assert!(child_output.contains("--print hello"));

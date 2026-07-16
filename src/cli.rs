@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "claudex",
     version,
-    about = "Multi-instance Claude Code manager with intelligent translation proxy"
+    about = "Local multi-provider model gateway for Claude Code"
 )]
 pub struct Cli {
     /// Override config file path
@@ -18,7 +18,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run Claude Code with a specific profile
+    /// Run Claude Code with a legacy profile
+    #[command(hide = true)]
     Run {
         /// Profile name to use
         profile: String,
@@ -33,7 +34,8 @@ pub enum Commands {
         args: Vec<String>,
     },
 
-    /// Manage profiles
+    /// Manage legacy profiles
+    #[command(hide = true)]
     Profile {
         #[command(subcommand)]
         action: ProfileAction,
@@ -46,6 +48,7 @@ pub enum Commands {
     },
 
     /// Launch the TUI dashboard
+    #[command(hide = true)]
     Dashboard,
 
     /// Manage configuration
@@ -54,10 +57,17 @@ pub enum Commands {
         action: Option<ConfigAction>,
     },
 
-    /// Manage OAuth authentication for subscription services
+    /// Manage legacy OAuth authentication
+    #[command(hide = true)]
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+
+    /// Open the local provider and model manager
+    Models {
+        #[command(subcommand)]
+        action: Option<ModelsAction>,
     },
 
     /// Manage Claude Code configuration sets
@@ -65,6 +75,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: SetsAction,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ModelsAction {
+    /// Open the account manager in your browser
+    Open,
 }
 
 #[derive(Subcommand)]

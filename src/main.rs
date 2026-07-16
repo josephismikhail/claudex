@@ -1,8 +1,10 @@
 #![allow(dead_code)]
 
+mod accounts;
 mod cli;
 mod config;
 mod context;
+mod integration;
 mod oauth;
 mod privacy;
 mod process;
@@ -19,7 +21,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-use cli::{AuthAction, Cli, Commands, ProfileAction, ProxyAction, SetsAction};
+use cli::{AuthAction, Cli, Commands, ModelsAction, ProfileAction, ProxyAction, SetsAction};
 use config::ClaudexConfig;
 
 #[tokio::main]
@@ -32,7 +34,7 @@ async fn main() -> Result<()> {
     // In particular, launching Claude from the dashboard keeps the same tracing
     // subscriber alive after leaving the dashboard. Writing proxy request logs
     // to stderr at that point corrupts Claude Code's terminal renderer.
-    let owns_terminal = command_owns_terminal(&cli.command, !config.profiles.is_empty());
+    let owns_terminal = command_owns_terminal(&cli.command);
 
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
@@ -102,6 +104,7 @@ async fn main() -> Result<()> {
                 port,
                 daemon: as_daemon,
             } => {
+                accounts::apply_to_config(&mut config)?;
                 if as_daemon {
                     let actual_port = port.unwrap_or(config.proxy_port);
                     if proxy::is_proxy_reachable(&config.proxy_host, actual_port).await {
@@ -203,56 +206,17 @@ async fn main() -> Result<()> {
             }
         },
 
-        None => match default_action(&config) {
-            DefaultAction::Welcome => print_welcome()?,
-            DefaultAction::AutoRun(profile_name) => {
-                run_profile_session(&config, &profile_name, None, &[], false).await?;
-            }
-            DefaultAction::Dashboard => {
-                let config_arc = std::sync::Arc::new(tokio::sync::RwLock::new(config));
-                let metrics_store = proxy::metrics::MetricsStore::new();
-                let health =
-                    std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
-                tui::run_tui(config_arc, metrics_store, health).await?;
-            }
+        Some(Commands::Models { action }) => match action.unwrap_or(ModelsAction::Open) {
+            ModelsAction::Open => integration::open_model_manager(&mut config).await?,
         },
+
+        None => {
+            integration::ensure_models_skill()?;
+            accounts::apply_to_config(&mut config)?;
+            run_profile_session(&config, accounts::SESSION_PROFILE_NAME, None, &[], false).await?;
+        }
     }
 
-    Ok(())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum DefaultAction {
-    Welcome,
-    AutoRun(String),
-    Dashboard,
-}
-
-fn default_action(config: &ClaudexConfig) -> DefaultAction {
-    if config.profiles.is_empty() {
-        return DefaultAction::Welcome;
-    }
-
-    let enabled = config.enabled_profiles();
-    if enabled.len() == 1 {
-        DefaultAction::AutoRun(enabled[0].name.clone())
-    } else {
-        DefaultAction::Dashboard
-    }
-}
-
-fn print_welcome() -> Result<()> {
-    println!("Welcome to Claudex!");
-    println!();
-    println!("Get started:");
-    println!("  1. Create config: claudex config");
-    println!(
-        "  2. Add a profile: edit {:?}",
-        ClaudexConfig::config_path()?
-    );
-    println!("  3. Run claude:    claudex run <profile>");
-    println!();
-    println!("Use --help for more options.");
     Ok(())
 }
 
@@ -286,9 +250,8 @@ async fn run_profile_session(
     Ok(())
 }
 
-fn command_owns_terminal(command: &Option<Commands>, has_profiles: bool) -> bool {
-    matches!(command, Some(Commands::Run { .. } | Commands::Dashboard))
-        || (command.is_none() && has_profiles)
+fn command_owns_terminal(command: &Option<Commands>) -> bool {
+    matches!(command, Some(Commands::Run { .. } | Commands::Dashboard)) || command.is_none()
 }
 
 async fn start_proxy_background(config: &ClaudexConfig) -> Result<()> {
@@ -328,9 +291,9 @@ mod tests {
             hyperlinks: false,
             args: Vec::new(),
         });
-        assert!(command_owns_terminal(&run, true));
-        assert!(command_owns_terminal(&Some(Commands::Dashboard), true));
-        assert!(command_owns_terminal(&None, true));
+        assert!(command_owns_terminal(&run));
+        assert!(command_owns_terminal(&Some(Commands::Dashboard)));
+        assert!(command_owns_terminal(&None));
     }
 
     #[test]
@@ -338,80 +301,6 @@ mod tests {
         let command = Some(Commands::Profile {
             action: ProfileAction::List,
         });
-        assert!(!command_owns_terminal(&command, true));
-        assert!(!command_owns_terminal(&None, false));
-    }
-
-    #[test]
-    fn bare_command_welcomes_when_no_profiles_exist() {
-        assert_eq!(
-            default_action(&ClaudexConfig::default()),
-            DefaultAction::Welcome
-        );
-    }
-
-    #[test]
-    fn bare_command_runs_the_only_enabled_profile() {
-        let config = ClaudexConfig {
-            profiles: vec![config::ProfileConfig {
-                name: "only".to_string(),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        assert_eq!(
-            default_action(&config),
-            DefaultAction::AutoRun("only".to_string())
-        );
-    }
-
-    #[test]
-    fn disabled_profiles_do_not_force_account_selection() {
-        let config = ClaudexConfig {
-            profiles: vec![
-                config::ProfileConfig {
-                    name: "only".to_string(),
-                    ..Default::default()
-                },
-                config::ProfileConfig {
-                    name: "old".to_string(),
-                    enabled: false,
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        assert_eq!(
-            default_action(&config),
-            DefaultAction::AutoRun("only".to_string())
-        );
-    }
-
-    #[test]
-    fn bare_command_opens_dashboard_for_multiple_or_only_disabled_profiles() {
-        let multiple = ClaudexConfig {
-            profiles: vec![
-                config::ProfileConfig {
-                    name: "one".to_string(),
-                    ..Default::default()
-                },
-                config::ProfileConfig {
-                    name: "two".to_string(),
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        assert_eq!(default_action(&multiple), DefaultAction::Dashboard);
-
-        let disabled = ClaudexConfig {
-            profiles: vec![config::ProfileConfig {
-                name: "off".to_string(),
-                enabled: false,
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        assert_eq!(default_action(&disabled), DefaultAction::Dashboard);
+        assert!(!command_owns_terminal(&command));
     }
 }

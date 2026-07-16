@@ -2,6 +2,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::response::IntoResponse;
 use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
@@ -37,73 +38,135 @@ pub fn find_available_port() -> Result<u16> {
     Ok(port)
 }
 
-/// 启动本地 OAuth 回调服务器，等待浏览器回调携带 auth code
-pub async fn start_callback_server(port: u16) -> Result<String> {
-    let (tx, rx) = oneshot::channel::<String>();
-    let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+/// A callback listener that is already bound before an authorization URL is
+/// opened. Binding first avoids a race where a fast browser redirects before
+/// Claudex is listening.
+pub struct CallbackServer {
+    rx: oneshot::Receiver<std::result::Result<String, String>>,
+    server_handle: tokio::task::JoinHandle<()>,
+}
 
-    let tx_clone = tx.clone();
-    let app = axum::Router::new().route(
+impl CallbackServer {
+    pub async fn bind(port: u16, expected_state: Option<String>) -> Result<Self> {
+        let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
+            .await
+            .context("failed to bind callback server")?;
+
+        let (tx, rx) = oneshot::channel::<std::result::Result<String, String>>();
+        let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+
+        let tx_clone = tx.clone();
+        let expected_state = Arc::new(expected_state);
+        let expected_state_clone = expected_state.clone();
+        let app = axum::Router::new().route(
         "/auth/callback",
         axum::routing::get(
             move |axum::extract::Query(params): axum::extract::Query<
                 std::collections::HashMap<String, String>,
             >| {
                 let tx = tx_clone.clone();
+                    let expected_state = expected_state_clone.clone();
                 async move {
+                        if let Some(expected) = expected_state.as_ref() {
+                            if params.get("state") != Some(expected) {
+                                return (
+                                    axum::http::StatusCode::BAD_REQUEST,
+                                    axum::response::Html(
+                                        "<html><body><h1>Authorization rejected</h1><p>The OAuth state did not match. Return to Claudex and try again.</p></body></html>".to_string(),
+                                    ),
+                                )
+                                    .into_response();
+                            }
+                        }
+
                     if let Some(code) = params.get("code") {
                         let mut guard = tx.lock().await;
                         if let Some(sender) = guard.take() {
-                            let _ = sender.send(code.clone());
+                                let _ = sender.send(Ok(code.clone()));
                         }
-                        axum::response::Html(
-                            "<html><body><h1>Authorization successful!</h1>\
-                             <p>You can close this tab and return to the terminal.</p>\
-                             <script>window.close()</script></body></html>"
-                                .to_string(),
-                        )
+                            (
+                                axum::http::StatusCode::OK,
+                                axum::response::Html(
+                                    "<html><body><h1>Authorization successful!</h1>\
+                                     <p>You can close this tab and return to Claudex.</p>\
+                                     <script>window.close()</script></body></html>"
+                                        .to_string(),
+                                ),
+                            )
+                                .into_response()
                     } else {
                         let error = params
                             .get("error")
                             .cloned()
                             .unwrap_or_else(|| "unknown error".to_string());
                         let desc = params.get("error_description").cloned().unwrap_or_default();
-                        axum::response::Html(format!(
-                            "<html><body><h1>Authorization failed</h1>\
-                             <p>Error: {error}</p><p>{desc}</p></body></html>"
-                        ))
+                            let message = format!("{error}: {desc}");
+                            let mut guard = tx.lock().await;
+                            if let Some(sender) = guard.take() {
+                                let _ = sender.send(Err(message));
+                            }
+                            (
+                                axum::http::StatusCode::BAD_REQUEST,
+                                axum::response::Html(format!(
+                                    "<html><body><h1>Authorization failed</h1>\
+                                     <p>Error: {}</p><p>{}</p></body></html>",
+                                    escape_html(&error),
+                                    escape_html(&desc)
+                                )),
+                            )
+                                .into_response()
                     }
                 }
             },
         ),
     );
 
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
-        .await
-        .context("failed to bind callback server")?;
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
 
-    // Spawn the server with graceful shutdown
-    let server_handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.ok();
-    });
+        Ok(Self { rx, server_handle })
+    }
 
-    // Wait for the callback (timeout 5 minutes), interruptible by Ctrl+C
-    let code = tokio::select! {
-        result = tokio::time::timeout(std::time::Duration::from_secs(300), rx) => {
-            result
-                .context("OAuth callback timed out (5 minutes)")?
-                .context("callback channel closed unexpectedly")?
-        }
-        _ = tokio::signal::ctrl_c() => {
-            server_handle.abort();
-            eprintln!("\nInterrupted.");
-            std::process::exit(130);
-        }
-    };
+    pub async fn wait(mut self) -> Result<String> {
+        let result = tokio::select! {
+            result = tokio::time::timeout(std::time::Duration::from_secs(300), &mut self.rx) => {
+                result
+                    .context("OAuth callback timed out (5 minutes)")?
+                    .context("callback channel closed unexpectedly")?
+                    .map_err(anyhow::Error::msg)
+            }
+            result = tokio::signal::ctrl_c() => {
+                result.context("failed to listen for Ctrl+C")?;
+                Err(anyhow::anyhow!("OAuth authorization interrupted"))
+            }
+        };
 
-    server_handle.abort();
+        self.server_handle.abort();
+        result
+    }
+}
 
-    Ok(code)
+impl Drop for CallbackServer {
+    fn drop(&mut self) {
+        self.server_handle.abort();
+    }
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Start a local OAuth callback server and wait for a browser authorization
+/// code. Callers with a state token should use `CallbackServer::bind`.
+pub async fn start_callback_server(port: u16) -> Result<String> {
+    let server = CallbackServer::bind(port, None).await?;
+    server.wait().await
 }
 
 /// Device Code Flow: 轮询 token 端点直到用户授权
@@ -364,12 +427,48 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert!(resp.status().is_success());
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
         let body = resp.text().await.unwrap();
         assert!(body.contains("Authorization failed"));
         assert!(body.contains("access_denied"));
 
-        // 服务器不会收到 code，等超时（但我们不想等 5 分钟，所以 abort）
-        server.abort();
+        let error = server.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("access_denied"));
+    }
+
+    #[tokio::test]
+    async fn callback_server_rejects_mismatched_state_without_consuming_flow() {
+        let port = find_available_port().unwrap();
+        let server = CallbackServer::bind(port, Some("expected".to_string()))
+            .await
+            .unwrap();
+        let client = reqwest::Client::new();
+
+        let rejected = client
+            .get(format!(
+                "http://127.0.0.1:{port}/auth/callback?code=stolen&state=wrong"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let accepted = client
+            .get(format!(
+                "http://127.0.0.1:{port}/auth/callback?code=real&state=expected"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert!(accepted.status().is_success());
+        assert_eq!(server.wait().await.unwrap(), "real");
+    }
+
+    #[test]
+    fn oauth_errors_are_html_escaped() {
+        assert_eq!(
+            escape_html("<script>'x'</script>"),
+            "&lt;script&gt;&#39;x&#39;&lt;/script&gt;"
+        );
     }
 }

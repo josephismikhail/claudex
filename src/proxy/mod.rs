@@ -6,6 +6,7 @@ pub mod handler;
 pub mod health;
 pub mod metrics;
 pub mod models;
+pub mod setup;
 pub mod translate;
 pub mod util;
 
@@ -13,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Result;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use tokio::sync::RwLock;
 
@@ -31,6 +32,10 @@ pub struct ProxyState {
     pub shared_context: SharedContext,
     pub rag_index: Option<RagIndex>,
     pub token_manager: crate::oauth::manager::TokenManager,
+    pub setup_status: Arc<RwLock<setup::SetupStatus>>,
+    pub account_store_lock: Arc<tokio::sync::Mutex<()>>,
+    pub setup_enabled: bool,
+    pub setup_origin: String,
 }
 
 static PROXY_LOG_PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
@@ -87,6 +92,13 @@ async fn start_proxy_inner(
 
     let token_manager = crate::oauth::manager::TokenManager::new(http_client.clone());
 
+    let setup_origin_host = if host.eq_ignore_ascii_case("localhost") {
+        "localhost".to_string()
+    } else if host == "::1" {
+        "[::1]".to_string()
+    } else {
+        host.clone()
+    };
     let state = Arc::new(ProxyState {
         config: Arc::new(RwLock::new(config)),
         metrics: MetricsStore::new(),
@@ -96,6 +108,10 @@ async fn start_proxy_inner(
         shared_context: SharedContext::new(),
         rag_index,
         token_manager,
+        setup_status: Arc::new(RwLock::new(setup::SetupStatus::default())),
+        account_store_lock: Arc::new(tokio::sync::Mutex::new(())),
+        setup_enabled: setup::is_loopback_host(&host),
+        setup_origin: format!("http://{setup_origin_host}:{port}"),
     });
 
     // Do not probe provider endpoints in the background. A provider is
@@ -112,7 +128,19 @@ async fn start_proxy_inner(
             "/proxy/{profile}/v1/messages",
             post(handler::handle_messages),
         )
-        .route("/health", get(|| async { "ok" }))
+        .route(
+            "/health",
+            get(|| async { ([("x-claudex-proxy", "1")], "ok") }),
+        )
+        .route("/setup", get(setup::page))
+        .route("/setup/api/state", get(setup::state))
+        .route("/setup/api/connect/openai", post(setup::connect_openai))
+        .route(
+            "/setup/api/connect/anthropic",
+            post(setup::connect_anthropic),
+        )
+        .route("/setup/api/accounts/{id}", delete(setup::remove_account))
+        .route("/setup/api/default", post(setup::set_default_model))
         .with_state(state);
 
     let bind_addr = format!("{host}:{port}");
@@ -142,14 +170,31 @@ impl Drop for PidFileGuard {
 }
 
 pub async fn is_proxy_reachable(host: &str, port: u16) -> bool {
-    matches!(
-        tokio::time::timeout(
-            Duration::from_millis(500),
-            tokio::net::TcpStream::connect((host, port)),
-        )
-        .await,
-        Ok(Ok(_))
-    )
+    let browser_host = match host {
+        "0.0.0.0" | "::" => "127.0.0.1".to_string(),
+        "::1" => "[::1]".to_string(),
+        other => other.to_string(),
+    };
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(500))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    client
+        .get(format!("http://{browser_host}:{port}/health"))
+        .send()
+        .await
+        .is_ok_and(|response| {
+            response.status().is_success()
+                && response
+                    .headers()
+                    .get("x-claudex-proxy")
+                    .and_then(|value| value.to_str().ok())
+                    == Some("1")
+        })
 }
 
 pub async fn wait_for_proxy(host: &str, port: u16, timeout: Duration) -> bool {
@@ -180,7 +225,37 @@ mod tests {
             .await
             .unwrap();
         let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/health",
+                    get(|| async { ([("x-claudex-proxy", "1")], "ok") }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
         assert!(is_proxy_reachable("127.0.0.1", port).await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn proxy_reachability_rejects_an_unrelated_listener() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/health", get(|| async { "ok" })),
+            )
+            .await
+            .unwrap();
+        });
+        assert!(!is_proxy_reachable("127.0.0.1", port).await);
+        server.abort();
     }
 
     #[tokio::test]
@@ -225,5 +300,86 @@ mod tests {
             unexpected_connection.is_err(),
             "proxy startup contacted a configured provider"
         );
+    }
+
+    #[tokio::test]
+    async fn empty_session_is_served_locally_with_an_empty_model_catalog() {
+        let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_port = port_probe.local_addr().unwrap().port();
+        drop(port_probe);
+        let mut config = ClaudexConfig {
+            proxy_host: "127.0.0.1".to_string(),
+            proxy_port,
+            ..Default::default()
+        };
+        crate::accounts::apply_store_to_config(
+            &mut config,
+            &crate::accounts::AccountStore::default(),
+        );
+
+        let proxy = tokio::spawn(start_embedded_proxy(config, None));
+        assert!(wait_for_proxy("127.0.0.1", proxy_port, Duration::from_secs(2)).await);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let models: serde_json::Value = client
+            .get(format!(
+                "http://127.0.0.1:{proxy_port}/proxy/{}/v1/models",
+                crate::accounts::SESSION_PROFILE_NAME
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(models["data"], serde_json::json!([]));
+
+        let setup_page = client
+            .get(format!("http://127.0.0.1:{proxy_port}/setup"))
+            .send()
+            .await
+            .unwrap();
+        assert!(setup_page.status().is_success());
+        assert_eq!(
+            setup_page
+                .headers()
+                .get("x-frame-options")
+                .and_then(|value| value.to_str().ok()),
+            Some("DENY")
+        );
+
+        let rejected = client
+            .post(format!(
+                "http://127.0.0.1:{proxy_port}/setup/api/connect/openai"
+            ))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), reqwest::StatusCode::FORBIDDEN);
+
+        let response: serde_json::Value = client
+            .post(format!(
+                "http://127.0.0.1:{proxy_port}/proxy/{}/v1/messages",
+                crate::accounts::SESSION_PROFILE_NAME
+            ))
+            .json(&serde_json::json!({
+                "model": crate::accounts::ONBOARDING_MODEL,
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hello"}]
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        proxy.abort();
+
+        assert_eq!(response["model"], crate::accounts::ONBOARDING_MODEL);
+        assert!(response["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("/models"));
     }
 }

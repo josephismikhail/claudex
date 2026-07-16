@@ -1,331 +1,62 @@
 ---
 title: CLI Reference
-description: Complete command reference for the Claudex CLI
+description: Commands for the account-first Claudex workflow
 ---
 
-## Global Usage
+## `claudex`
 
-```
-claudex [OPTIONS] [COMMAND]
-```
+Launch the unified Claude Code session:
 
-| Option | Description |
-|--------|-------------|
-| `--config <PATH>` | Override config file path |
-| `--version` | Print version |
-| `--help` | Print help |
-
-When run without a command, Claudex immediately launches the sole enabled profile. With multiple enabled profiles it opens the TUI picker; with no profiles it shows the welcome message. Disabled profiles do not force a selection.
-
-## Commands
-
-### `run`
-
-Run Claude Code with a specific provider profile.
-
-```bash
-claudex run <PROFILE> [PROMPT] [OPTIONS] [-- ARGS...]
+```powershell
+claudex
 ```
 
-| Argument / Option | Description |
-|----------|-------------|
-| `PROFILE` | Profile name, or `auto` for smart routing |
-| `PROMPT` | Optional prompt for non-interactive (one-shot) execution |
-| `-m, --model MODEL` | Override the default model for this session |
-| `--hyperlinks` | Force enable OSC 8 terminal hyperlinks |
-| `--print` | Print the response and exit (non-interactive mode) |
-| `--dangerously-skip-permissions` | Skip all permission prompts (use with `--print` for CI/CD) |
-| `ARGS...` | Additional arguments passed to `claude` (after `--`) |
+This behaves the same with zero, one, or multiple connected providers. It never
+opens a profile picker. With zero providers, responses come from the local
+onboarding model until `/models` is used.
 
-```bash
-# Use Grok (interactive)
-claudex run grok
+## `claudex models`
 
-# Use Grok with a specific model
-claudex run grok -m grok-3-mini-beta
+Open the loopback provider and model manager in the default browser:
 
-# Smart routing
-claudex run auto
-
-# Force terminal hyperlinks
-claudex run grok --hyperlinks
-
-# Non-interactive one-shot execution
-claudex run grok "Explain this codebase" --print
-
-# CI/CD pipeline usage (no prompts, no permissions)
-claudex run grok "Fix lint errors" --print --dangerously-skip-permissions
-
-# Pass extra args to claude
-claudex run grok -- --verbose
+```powershell
+claudex models
+claudex models open
 ```
 
-### `profile`
+The managed Claude Code skill invokes `claudex models open`, which is why
+typing `/models` inside a session opens the same page.
 
-Manage provider profiles.
+## `claudex proxy`
 
-#### `profile list`
-
-```bash
-claudex profile list
-```
-
-List all configured profiles with their status, provider type, and model.
-
-#### `profile add`
-
-```bash
-claudex profile add
-```
-
-Interactive wizard to add a new profile. Guides through provider selection, API key entry (with optional keyring storage), model selection, and connectivity testing.
-
-#### `profile show`
-
-```bash
-claudex profile show <NAME>
-```
-
-Show details for a specific profile including all configuration fields.
-
-#### `profile remove`
-
-```bash
-claudex profile remove <NAME>
-```
-
-Remove a profile from the configuration.
-
-#### `profile test`
-
-```bash
-claudex profile test <NAME|all>
-```
-
-Test connectivity for a specific profile or all profiles. Sends a lightweight request to the provider's `/models` endpoint.
-
-### `auth`
-
-Manage OAuth subscription authentication for provider profiles.
-
-#### `auth login`
-
-```bash
-claudex auth login <PROVIDER> [OPTIONS]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--profile <NAME>` | Associate with a specific profile |
-| `--enterprise-url <URL>` | Custom enterprise server URL (for self-hosted GitLab, etc.) |
-| `--headless` | Use headless (device code) flow, skip browser launch |
-
-Log in to a provider using OAuth. Supported providers: `claude`, `openai`, `google`, `qwen`, `kimi`, `github`, `gitlab`.
-
-```bash
-# Log in to OpenAI (reads from Codex CLI)
-claudex auth login openai --profile codex-sub
-
-# Log in to Claude (reads from ~/.claude)
-claudex auth login claude
-
-# Log in to Google
-claudex auth login google --profile gemini-sub
-
-# Log in to GitLab with enterprise URL
-claudex auth login gitlab --enterprise-url https://gitlab.mycompany.com
-
-# Headless mode (no browser, device code only)
-claudex auth login github --headless
-```
-
-#### `auth status`
-
-```bash
-claudex auth status [PROVIDER]
-```
-
-Show the current authentication status. Without a provider argument, shows status for all configured OAuth profiles.
-
-```bash
-# Check all OAuth profiles
-claudex auth status
-
-# Check a specific provider
-claudex auth status openai
-```
-
-#### `auth refresh`
-
-```bash
-claudex auth refresh <PROVIDER>
-```
-
-Manually refresh the OAuth token for a provider. Tokens are also refreshed automatically by the proxy when they expire.
-
-#### `auth logout`
-
-```bash
-claudex auth logout <PROVIDER>
-```
-
-Remove stored OAuth tokens for a provider from the system keyring.
-
-### `proxy`
-
-Manage the translation proxy server.
-
-#### `proxy start`
-
-```bash
-claudex proxy start [OPTIONS]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-p, --port PORT` | Override proxy port (default: from config) |
-| `-d, --daemon` | Run as background daemon |
-
-#### `proxy stop`
-
-```bash
+```powershell
+claudex proxy start
+claudex proxy start --daemon
+claudex proxy status
 claudex proxy stop
 ```
 
-Stop the proxy daemon (sends SIGTERM via PID file).
+The interactive bare command normally owns an embedded proxy that exits with
+the session. A daemon is useful only when opening the model manager outside a
+session.
 
-#### `proxy status`
+## `claudex config`
 
-```bash
-claudex proxy status
-```
+Advanced configuration remains available for custom endpoints and existing
+profile-based installations:
 
-Show whether the proxy is running and on which port.
-
-### `dashboard`
-
-```bash
-claudex dashboard
-```
-
-Launch the TUI dashboard for real-time monitoring and quick-launch.
-
-### `config`
-
-Manage configuration files.
-
-#### `config show`
-
-```bash
+```powershell
 claudex config show
-```
-
-Display the loaded config file path, search order, and current configuration values.
-
-#### `config path`
-
-```bash
 claudex config path
-```
-
-Print only the resolved config file path.
-
-#### `config init`
-
-```bash
-claudex config init
-```
-
-Create a new config file in the current directory from the built-in template.
-
-#### `config recreate`
-
-```bash
-claudex config recreate
-```
-
-Recreate the config file from `config.example.toml`, overwriting the existing config.
-
-#### `config edit`
-
-```bash
-claudex config edit
-```
-
-Open the config file in your `$EDITOR` (or `$VISUAL`).
-
-#### `config validate`
-
-```bash
 claudex config validate
+claudex config edit --global
 ```
 
-Validate config syntax, profile references (backup_providers, router rules), and OAuth provider settings. Reports errors and warnings.
+## Legacy compatibility
 
-#### `config get`
+The old `run`, `profile`, `dashboard`, and `auth` commands remain callable but
+are hidden from normal help. They exist for existing custom-provider configs;
+new installations should use bare `claudex` and `/models`.
 
-```bash
-claudex config get <KEY>
-```
-
-Get a specific configuration value by key path (e.g., `proxy_port`, `profiles.0.name`).
-
-#### `config set`
-
-```bash
-claudex config set <KEY> <VALUE>
-```
-
-Set a specific configuration value by key path.
-
-#### `config export`
-
-```bash
-claudex config export
-```
-
-Export the current merged configuration to stdout in TOML format.
-
-### `sets`
-
-Manage configuration sets (installable bundles of rules, skills, and MCP servers).
-
-#### `sets add`
-
-```bash
-claudex sets add <PATH>
-```
-
-Install a configuration set from a local directory containing a `manifest.json` (or `manifest.yaml`).
-
-#### `sets remove`
-
-```bash
-claudex sets remove <NAME>
-```
-
-Remove an installed configuration set by name.
-
-#### `sets list`
-
-```bash
-claudex sets list
-```
-
-List all installed configuration sets with their version, description, and component summary.
-
-#### `sets update`
-
-```bash
-claudex sets update <NAME> <PATH>
-```
-
-Update an existing configuration set from a new manifest path.
-
-#### `sets show`
-
-```bash
-claudex sets show <NAME>
-```
-
-Show detailed information about an installed configuration set, including all components.
+Claude Free, Pro, and Max OAuth routing is rejected. Use an Anthropic Console
+API key from `/models`.
