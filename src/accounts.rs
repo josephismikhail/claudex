@@ -197,6 +197,12 @@ impl AccountStore {
             .iter()
             .any(|account| account.models.iter().any(|candidate| candidate == model))
     }
+
+    pub fn has_provider(&self, provider: AccountProvider) -> bool {
+        self.accounts
+            .iter()
+            .any(|account| account.provider == provider)
+    }
 }
 
 /// Rebuild the account-backed portion of a loaded config without persisting

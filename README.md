@@ -45,6 +45,18 @@ Inside Claude Code:
    the same session. On later launches, bare `/model` lists the persisted
    models in its picker.
 
+When OpenAI is connected, two OpenAI-only commands appear in that same session:
+
+- `/fast` toggles OpenAI priority processing for the current Claudex session.
+  It uses the same `service_tier: "priority"` request as
+  [Codex fast mode](https://learn.chatgpt.com/docs/agent-configuration/speed.md)
+  and is about 1.5x faster, with accelerated subscription-credit consumption.
+- `/usage` fetches a live OpenAI subscription snapshot and shows the percentage
+  remaining in each returned usage window and when it resets.
+
+Both commands disappear when the OpenAI account is removed. `/usage` is not
+shown for API-key providers or Anthropic accounts.
+
 Connected accounts survive exits and restarts. Bare `claudex` always returns to
 the unified session, whether one provider or several are connected.
 
@@ -77,6 +89,15 @@ Anthropic through a Console API key only; see Anthropic's
 - The `/models` command is installed as a managed personal Claude Code skill at
   `~/.claude/skills/models/SKILL.md`. An existing user-authored `/models` skill
   is preserved; Claudex installs `/claudex-models` instead.
+- OpenAI-only `/fast` and `/usage` skills are stored under
+  `~/.config/claudex/claude-integration/` and loaded with `--add-dir`, so they
+  do not replace commands in ordinary Claude Code sessions. Claude Code watches
+  that directory, allowing the commands to appear or disappear after `/models`
+  authentication without restarting.
+- `/fast` state is a small per-session JSON file under
+  `~/.config/claudex/sessions/`. It contains only a version and an on/off value,
+  is selected through a random loopback-only ID, and is removed when the Claude
+  process exits.
 - The proxy and browser manager bind to loopback by default. Mutating browser
   requests require the exact same origin.
 - Provider endpoints are not probed at startup. Anthropic's model catalog is
@@ -116,6 +137,11 @@ added or removed. Requests are routed by exact model ID, so the selected model
 can change providers while Claude Code keeps the same conversation and
 subagent harness. Claude Code's `ultracode` effort is translated to GPT-5.6
 `reasoning.effort = "xhigh"`.
+
+When `/fast` is on, the same translation path adds
+`service_tier = "priority"` only for the connected OpenAI subscription route.
+The local gateway strips client-supplied fast fields and ignores the session
+state for every other provider.
 
 Claudex enables Claude Code's gateway model discovery automatically. Claude
 Code refreshes that picker at process startup, so a provider added during the

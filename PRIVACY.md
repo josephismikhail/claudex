@@ -38,6 +38,8 @@ still occur when you explicitly:
 
 - send a model request to a configured remote provider;
 - connect OpenAI, complete OAuth login, or refresh its token;
+- invoke `/usage`, which makes an authenticated request to OpenAI's subscription
+  usage endpoint and prints the returned limits locally;
 - connect Anthropic, which validates the supplied API key and retrieves that
   account's available models from Anthropic's Models API;
 - add or update a configuration set from a Git or HTTP URL;

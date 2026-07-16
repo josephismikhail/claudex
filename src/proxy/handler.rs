@@ -109,6 +109,15 @@ pub async fn handle_messages(
     };
     normalize_claude_oauth_base_url(&mut profile);
 
+    // `speed` is a Claude Code fast-mode field, not a client-controlled route
+    // to paid priority processing. Recreate it only for a connected ChatGPT
+    // subscription and a valid live Claudex session state.
+    apply_fast_mode(
+        &mut body_value,
+        &profile,
+        crate::openai::fast_enabled(&headers),
+    );
+
     if is_forbidden_claude_subscription(&profile) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -280,6 +289,16 @@ fn is_forbidden_claude_subscription(profile: &ProfileConfig) -> bool {
             .oauth_provider
             .as_ref()
             .is_some_and(|provider| provider.normalize() == crate::oauth::OAuthProvider::Claude)
+}
+
+fn apply_fast_mode(body: &mut Value, profile: &ProfileConfig, session_enabled: bool) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    object.remove("speed");
+    if session_enabled && crate::openai::is_subscription_profile(profile) {
+        object.insert("speed".to_string(), Value::String("fast".to_string()));
+    }
 }
 
 fn onboarding_response(streaming: bool) -> Response {
@@ -877,6 +896,41 @@ mod tests {
             ..Default::default()
         };
         assert!(is_forbidden_claude_subscription(&profile));
+    }
+
+    #[test]
+    fn fast_mode_is_added_only_to_openai_subscription_requests() {
+        let openai = ProfileConfig {
+            auth_type: AuthType::OAuth,
+            oauth_provider: Some(crate::oauth::OAuthProvider::Chatgpt),
+            ..Default::default()
+        };
+        let anthropic = ProfileConfig {
+            auth_type: AuthType::ApiKey,
+            ..Default::default()
+        };
+
+        let mut openai_body = serde_json::json!({"model": "gpt-5.6"});
+        apply_fast_mode(&mut openai_body, &openai, true);
+        assert_eq!(openai_body["speed"], "fast");
+
+        let mut anthropic_body = serde_json::json!({"model": "claude-opus-4-8", "speed": "fast"});
+        apply_fast_mode(&mut anthropic_body, &anthropic, true);
+        assert!(anthropic_body.get("speed").is_none());
+    }
+
+    #[test]
+    fn client_cannot_enable_fast_mode_without_session_state() {
+        let openai = ProfileConfig {
+            auth_type: AuthType::OAuth,
+            oauth_provider: Some(crate::oauth::OAuthProvider::Chatgpt),
+            ..Default::default()
+        };
+        let mut body = serde_json::json!({"model": "gpt-5.6", "speed": "fast"});
+
+        apply_fast_mode(&mut body, &openai, false);
+
+        assert!(body.get("speed").is_none());
     }
 
     #[test]
