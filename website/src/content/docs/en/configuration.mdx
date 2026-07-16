@@ -5,8 +5,9 @@ description: Account storage, defaults, and advanced compatibility
 
 ## Normal setup needs no config editing
 
-Run `claudex`, then `/models`. Provider accounts and their models are managed by
-the localhost page and persisted independently of project configuration.
+Run `claudex`, then `/model`. Provider authentication opens the bundled
+localhost page, and the resulting models are persisted independently of
+project configuration.
 
 Account metadata lives at:
 
@@ -19,9 +20,8 @@ operating system credential store.
 
 ## Default model
 
-Use **Make default** beside a connected model in `/models`. The choice applies
-to future sessions. In a running Claude Code session, use `/model` to switch
-without changing the persistent default.
+Select a connected model in `/model`. The choice becomes the default for future
+sessions and takes effect immediately in the running session.
 
 ## Base settings
 
@@ -40,8 +40,9 @@ The account manager is available only when `proxy_host` is loopback.
 ## Advanced legacy providers
 
 Custom local and OpenAI-compatible endpoints can still be defined as profiles.
-They automatically appear in the unified bare session, but profile commands are
-hidden from normal help so they do not complicate first-run setup.
+They stay out of the account-first picker and are launched explicitly with
+`claudex run <legacy-profile>`; profile commands remain hidden from normal help
+so they do not complicate first-run setup.
 
 ```toml
 [[profiles]]
@@ -57,4 +58,4 @@ See the repository's
 for router, fallback, context-engine, and custom-header fields.
 
 Claude subscription OAuth profiles are unsupported and rejected. Anthropic
-must be connected with a Console API key from `/models`.
+must be connected with a Console API key from `/model`.

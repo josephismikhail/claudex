@@ -5,15 +5,15 @@ description: Commands for the account-first Claudex workflow
 
 ## `claudex`
 
-Launch the unified Claude Code session:
+Launch the unified Joey's Claudex session:
 
 ```powershell
 claudex
 ```
 
 This behaves the same with zero, one, or multiple connected providers. It never
-opens a profile picker. With zero providers, responses come from the local
-onboarding model until `/models` is used.
+opens a profile picker. With zero providers, the header directs the user to
+`/model`; no remote request is made until a provider is authenticated.
 
 ## `claudex models`
 
@@ -24,8 +24,8 @@ claudex models
 claudex models open
 ```
 
-The managed Claude Code skill invokes `claudex models open`, which is why
-typing `/models` inside a session opens the same page.
+This compatibility command opens the same local browser manager used by the
+in-session `/model` provider flow.
 
 ## `claudex proxy`
 
@@ -56,7 +56,7 @@ claudex config edit --global
 
 The old `run`, `profile`, `dashboard`, and `auth` commands remain callable but
 are hidden from normal help. They exist for existing custom-provider configs;
-new installations should use bare `claudex` and `/models`.
+new installations should use bare `claudex` and `/model`.
 
 Claude Free, Pro, and Max OAuth routing is rejected. Use an Anthropic Console
-API key from `/models`.
+API key from `/model`.

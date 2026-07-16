@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "claudex",
     version,
-    about = "Local multi-provider model gateway for Claude Code"
+    about = "Local multi-provider coding-agent terminal and model gateway"
 )]
 pub struct Cli {
     /// Override config file path

@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install Claudex, launch one session, and add providers from /models
+description: Install Claudex, launch one session, and authenticate from /model
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
@@ -44,11 +44,12 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 claudex
 ```
 
-There is no initial configuration step. Claude Code opens with an empty
-provider catalog. Inside that session:
+There is no initial configuration step. Joey's Claudex opens with an empty
+provider catalog and `/model to authenticate` in its header:
 
-1. Run `/models`.
-2. Connect OpenAI or Anthropic API in the local browser page.
-3. Return to Claude Code and run `/model`.
+1. Run `/model`.
+2. Choose OpenAI or Anthropic.
+3. Finish authentication in the browser and select a returned model.
 
-The account and model catalog persist the next time you run `claudex`.
+The account, model catalog, and default model persist the next time you run
+`claudex`.
