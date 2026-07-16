@@ -32,7 +32,7 @@ impl AccountProvider {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Openai => "OpenAI",
-            Self::Anthropic => "Anthropic",
+            Self::Anthropic => "Anthropic API",
         }
     }
 
@@ -52,7 +52,7 @@ impl AccountProvider {
 
     pub fn default_models(&self) -> Vec<String> {
         match self {
-            Self::Openai => vec!["gpt-5.6-sol".to_string()],
+            Self::Openai => vec!["gpt-5.6".to_string()],
             Self::Anthropic => vec![
                 "claude-opus-4-8".to_string(),
                 "claude-sonnet-5".to_string(),
@@ -71,7 +71,7 @@ pub struct AccountRecord {
     pub models: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountStore {
     #[serde(default = "store_version")]
     pub version: u32,
@@ -271,13 +271,13 @@ pub fn apply_store_to_config(config: &mut ClaudexConfig, store: &AccountStore) {
             .unwrap_or_else(|| ONBOARDING_MODEL.to_string());
     }
 
-    root.models = model_slots(&available);
+    root.models = model_slots(&available, &root.default_model);
     config.profiles.push(root);
 }
 
 fn account_profile(account: &AccountRecord) -> ProfileConfig {
     let default_model = account.models.first().cloned().unwrap_or_default();
-    let models = model_slots(&account.models);
+    let models = model_slots(&account.models, &default_model);
     match account.provider {
         AccountProvider::Openai => ProfileConfig {
             name: OPENAI_PROFILE_NAME.to_string(),
@@ -305,17 +305,13 @@ fn account_profile(account: &AccountRecord) -> ProfileConfig {
     }
 }
 
-fn model_slots(models: &[String]) -> ProfileModels {
-    // Claude Code exposes these three environment variables as named Claude
-    // family rows. Only populate a row when the connected account really has
-    // that family. Falling back every row to the account's default model made
-    // provider-neutral and OpenAI models masquerade as custom Haiku, Sonnet,
-    // and Opus entries in `/model`.
+fn model_slots(models: &[String], default_model: &str) -> ProfileModels {
     let find = |needle: &str| {
         models
             .iter()
             .find(|model| model.to_ascii_lowercase().contains(needle))
             .cloned()
+            .or_else(|| (!default_model.is_empty()).then(|| default_model.to_string()))
     };
     ProfileModels {
         haiku: find("haiku"),
@@ -376,23 +372,7 @@ mod tests {
         let root = config.find_profile(SESSION_PROFILE_NAME).unwrap();
         assert_eq!(root.default_model, ONBOARDING_MODEL);
         assert!(root.model_routes.is_empty());
-        assert_eq!(root.models, ProfileModels::default());
         assert!(root.runtime_managed);
-    }
-
-    #[test]
-    fn only_real_anthropic_families_fill_claude_code_slots() {
-        let openai = model_slots(&["gpt-5.6-sol".to_string()]);
-        assert_eq!(openai, ProfileModels::default());
-
-        let anthropic = model_slots(&[
-            "claude-opus-4-8".to_string(),
-            "claude-sonnet-5".to_string(),
-            "claude-haiku-4-5".to_string(),
-        ]);
-        assert_eq!(anthropic.opus.as_deref(), Some("claude-opus-4-8"));
-        assert_eq!(anthropic.sonnet.as_deref(), Some("claude-sonnet-5"));
-        assert_eq!(anthropic.haiku.as_deref(), Some("claude-haiku-4-5"));
     }
 
     #[test]
@@ -404,7 +384,7 @@ mod tests {
         apply_store_to_config(&mut config, &store);
 
         let root = config.find_profile(SESSION_PROFILE_NAME).unwrap();
-        assert_eq!(root.model_routes["gpt-5.6-sol"], OPENAI_PROFILE_NAME);
+        assert_eq!(root.model_routes["gpt-5.6"], OPENAI_PROFILE_NAME);
         assert_eq!(root.model_routes["claude-sonnet-5"], ANTHROPIC_PROFILE_NAME);
         let serialized = toml::to_string(&config).unwrap();
         assert!(!serialized.contains("runtime_managed"));

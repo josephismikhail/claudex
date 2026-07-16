@@ -11,7 +11,6 @@ use crate::accounts::{AccountProvider, AccountStore};
 use crate::proxy::ProxyState;
 
 const CHATGPT_CALLBACK_PORT: u16 = 1455;
-const OPENAI_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
 const SETUP_HTML: &str = include_str!("setup.html");
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,7 +144,7 @@ pub async fn connect_openai(State(state): State<Arc<ProxyState>>, headers: Heade
         status.openai = match result {
             Ok(()) => AuthAttempt {
                 state: AttemptState::Connected,
-                message: "OpenAI is connected. Use /model in Joey's Claudex to switch.".to_string(),
+                message: "OpenAI is connected. Use /model in Claude Code to switch.".to_string(),
             },
             Err(error) => {
                 tracing::warn!(%error, "OpenAI account connection failed");
@@ -179,21 +178,9 @@ async fn complete_openai_connection(
     )
     .await?;
 
-    // The Codex model catalog is scoped to the authenticated ChatGPT account,
-    // so the picker reflects that account's actual subscription entitlements.
-    // Authentication should still complete during a transient catalog outage;
-    // a known-good default remains usable until the account is reconnected.
-    let models = match discover_openai_models(&state.http_client, &token).await {
-        Ok(models) => models,
-        Err(error) => {
-            tracing::warn!(%error, "could not refresh the OpenAI model catalog; using the fallback model");
-            AccountProvider::Openai.default_models()
-        }
-    };
-
     let _guard = state.account_store_lock.lock().await;
     let mut store = AccountStore::load()?;
-    let record = store.upsert_with_models(AccountProvider::Openai, models);
+    let record = store.upsert(AccountProvider::Openai);
     crate::oauth::source::store_keyring(&record.credential_key, &token)?;
     state
         .token_manager
@@ -204,78 +191,6 @@ async fn complete_openai_connection(
     let mut config = state.config.write().await;
     crate::accounts::apply_store_to_config(&mut config, &store);
     Ok(())
-}
-
-async fn discover_openai_models(
-    client: &reqwest::Client,
-    token: &crate::oauth::OAuthToken,
-) -> anyhow::Result<Vec<String>> {
-    let account_id = crate::openai::subscription_account_id(token)?;
-    discover_openai_models_at(client, OPENAI_MODELS_URL, &token.access_token, &account_id).await
-}
-
-async fn discover_openai_models_at(
-    client: &reqwest::Client,
-    url: &str,
-    access_token: &str,
-    account_id: &str,
-) -> anyhow::Result<Vec<String>> {
-    let mut request_url = url::Url::parse(url)?;
-    request_url
-        .query_pairs_mut()
-        .append_pair("client_version", env!("CARGO_PKG_VERSION"));
-    let response = client
-        .get(request_url)
-        .bearer_auth(access_token)
-        .header("ChatGPT-Account-Id", account_id)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .header(
-            reqwest::header::USER_AGENT,
-            format!("claudex/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .send()
-        .await?;
-    let status = response.status();
-    let bytes = response.bytes().await?;
-    if !status.is_success() {
-        let detail: String = String::from_utf8_lossy(&bytes).chars().take(500).collect();
-        anyhow::bail!("OpenAI model discovery failed (HTTP {status}): {detail}");
-    }
-    let body: serde_json::Value = serde_json::from_slice(&bytes)?;
-    parse_openai_models(&body)
-}
-
-fn parse_openai_models(body: &serde_json::Value) -> anyhow::Result<Vec<String>> {
-    let mut models: Vec<(i64, String)> = body
-        .get("models")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|model| model.get("visibility").and_then(serde_json::Value::as_str) == Some("list"))
-        .filter_map(|model| {
-            let slug = model
-                .get("slug")
-                .and_then(serde_json::Value::as_str)?
-                .trim();
-            (!slug.is_empty()).then(|| {
-                (
-                    model
-                        .get("priority")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(i64::MAX),
-                    slug.to_string(),
-                )
-            })
-        })
-        .collect();
-    models.sort_by_key(|(priority, _)| *priority);
-    let mut seen = std::collections::HashSet::new();
-    models.retain(|(_, slug)| seen.insert(slug.clone()));
-    let models: Vec<String> = models.into_iter().map(|(_, slug)| slug).collect();
-    if models.is_empty() {
-        anyhow::bail!("OpenAI returned no picker-visible models for this account");
-    }
-    Ok(models)
 }
 
 #[derive(Debug, Deserialize)]
@@ -502,49 +417,5 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(models, vec!["claude-sonnet-5", "claude-haiku-4-5-20251001"]);
-    }
-
-    #[test]
-    fn openai_model_catalog_is_picker_visible_and_priority_sorted() {
-        let models = parse_openai_models(&json!({
-            "models": [
-                {"slug": "gpt-second", "visibility": "list", "priority": 20},
-                {"slug": "gpt-hidden", "visibility": "hide", "priority": 1},
-                {"slug": "gpt-first", "visibility": "list", "priority": 10}
-            ]
-        }))
-        .unwrap();
-        assert_eq!(models, vec!["gpt-first", "gpt-second"]);
-    }
-
-    #[tokio::test]
-    async fn openai_model_catalog_uses_subscription_headers() {
-        use wiremock::matchers::{header, method, path, query_param};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/models"))
-            .and(query_param("client_version", env!("CARGO_PKG_VERSION")))
-            .and(header("authorization", "Bearer secret-token"))
-            .and(header("chatgpt-account-id", "account-123"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "models": [
-                    {"slug": "gpt-account-model", "visibility": "list", "priority": 1}
-                ]
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let models = discover_openai_models_at(
-            &reqwest::Client::new(),
-            &format!("{}/models", server.uri()),
-            "secret-token",
-            "account-123",
-        )
-        .await
-        .unwrap();
-        assert_eq!(models, vec!["gpt-account-model"]);
     }
 }

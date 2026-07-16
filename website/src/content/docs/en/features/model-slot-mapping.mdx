@@ -1,35 +1,45 @@
 ---
 title: Live Model Switching
-description: Switch provider models with /model without restarting the agent
+description: Switch provider models with /model without restarting Claude Code
 ---
 
-Joey's Claudex presents one combined picker and routes each exact model ID to
-its connected provider.
+Claudex presents one model catalog to Claude Code and routes each exact model ID
+to its connected provider.
 
 ```text
-/model -> gpt-5.6-sol      -> OpenAI Responses API
+/model -> gpt-5.6          -> OpenAI Responses API
 /model -> claude-sonnet-5  -> Anthropic Messages API
 ```
 
 ## Live updates
 
-When `/model` connects or removes an account, the running proxy rebuilds its
-catalog in memory and the picker refreshes automatically. A session that
-started with zero providers does not need to restart.
+When `/models` connects or removes an account, the running proxy rebuilds its
+catalog in memory. A session that started with zero providers does not need to
+restart: requests still addressed to the local onboarding model are rewritten
+to the newly selected default, and `/model <model-id>` switches to any other
+connected model immediately.
 
-## Provider-neutral rows
+Claudex opts into Claude Code's gateway model discovery. Claude Code refreshes
+the clickable `/model` picker at process startup, so models added during the
+first empty session appear there on the next launch. The localhost manager
+provides a copy button for the immediate `/model <model-id>` command. Discovery
+requires Claude Code 2.1.129 or newer.
 
-The Claudex-owned picker displays the provider's exact model ID and provider
-name. It does not synthesize custom Opus, Sonnet, or Haiku descriptions for GPT
-models. The private onboarding identifier is never listed as a provider model.
+## Claude Code slots
+
+Claudex maps available model names to Claude Code's haiku, sonnet, and opus
+slots where a natural match exists. The profile-specific `/v1/models` endpoint
+also exposes every exact connected model ID. The private onboarding identifier
+is never listed as a provider model. OpenAI's GPT entry uses Claude Code's
+documented custom gateway-model option because gateway discovery filters model
+IDs that do not begin with `claude` or `anthropic`.
 
 ## Ultracode effort
 
-For a ChatGPT-backed GPT model, Claudex's effort selection is translated to
+For a ChatGPT-backed GPT model, Claude Code's effort selection is translated to
 the OpenAI Responses API `reasoning.effort` field. The `ultracode` label maps to
-`xhigh`. It also registers researcher, worker, and reviewer subagents that
-inherit the active provider model and tells the main harness to delegate
-independent work proactively and in parallel.
+`xhigh`. This changes the model's reasoning effort while retaining Claude
+Code's own conversation and subagent harness.
 
 ## Advanced routes
 

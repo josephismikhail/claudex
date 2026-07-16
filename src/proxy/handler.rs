@@ -121,7 +121,7 @@ pub async fn handle_messages(
     if is_forbidden_claude_subscription(&profile) {
         return (
             StatusCode::UNAUTHORIZED,
-            "Claude Free/Pro/Max credentials cannot be routed by Claudex. Connect an Anthropic Console API key with /model.",
+            "Claude Free/Pro/Max credentials cannot be routed by Claudex. Connect an Anthropic Console API key with /models.",
         )
             .into_response();
     }
@@ -315,7 +315,7 @@ fn apply_fast_mode(body: &mut Value, profile: &ProfileConfig, session_enabled: b
 }
 
 fn onboarding_response(streaming: bool) -> Response {
-    const TEXT: &str = "No provider models are connected yet. Run /model to authenticate OpenAI or Anthropic and choose a model without leaving this session.";
+    const TEXT: &str = "No provider models are connected yet. Run /models to open the local Claudex account manager, connect OpenAI or Anthropic, then use /model to switch models without leaving this session.";
 
     if !streaming {
         return (

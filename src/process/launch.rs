@@ -83,6 +83,12 @@ pub fn launch_claude(
     hyperlinks_override: bool,
 ) -> Result<()> {
     let fast_session = crate::fast::FastSession::create()?;
+    let integration_root = crate::integration::claude_integration_root()?;
+    let proxy_base = format!(
+        "http://{}:{}/proxy/{}",
+        config.proxy_host, config.proxy_port, profile.name
+    );
+
     let model = model_override
         .map(|m| config.resolve_model(m))
         .unwrap_or_else(|| config.resolve_model(&profile.default_model));
@@ -91,7 +97,75 @@ pub fn launch_claude(
     let is_noninteractive = extra_args.iter().any(|arg| arg == "-p" || arg == "--print")
         || extra_args.first().is_some_and(|arg| !arg.starts_with('-'));
 
-    let mut cmd = configured_claude_command(config, profile, &model, fast_session.id())?;
+    let mut cmd = create_claude_command(&config.claude_binary)?;
+
+    // 不设 CLAUDE_CONFIG_DIR — 使用全局 ~/.claude，保留用户已有认证和设置。
+    // Profile 差异化完全通过环境变量实现。
+
+    // Every profile goes through the local gateway. This keeps model_routes
+    // active when /model switches between providers in the same Claude Code
+    // session. The placeholder is accepted only by the loopback proxy and is
+    // never forwarded upstream.
+    cmd.env("ANTHROPIC_BASE_URL", &proxy_base)
+        .env("ANTHROPIC_AUTH_TOKEN", "claudex-passthrough")
+        .env("ANTHROPIC_MODEL", &model)
+        // Claude Code 2.1.129+ uses this opt-in to populate /model from the
+        // local gateway's profile-specific /v1/models endpoint.
+        .env("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1");
+
+    configure_openai_picker_entry(&mut cmd, config, profile);
+
+    // Claude Code can execute the managed `/models` skill with native
+    // PowerShell on Windows instead of requiring the old WSL/Git Bash path.
+    #[cfg(windows)]
+    cmd.env("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1");
+
+    // 模型 slot 映射 → Claude Code 的 /model 切换
+    if let Some(ref h) = profile.models.haiku {
+        cmd.env("ANTHROPIC_DEFAULT_HAIKU_MODEL", config.resolve_model(h));
+    }
+    if let Some(ref s) = profile.models.sonnet {
+        cmd.env("ANTHROPIC_DEFAULT_SONNET_MODEL", config.resolve_model(s));
+    }
+    if let Some(ref o) = profile.models.opus {
+        cmd.env("ANTHROPIC_DEFAULT_OPUS_MODEL", config.resolve_model(o));
+    }
+
+    // Claude Code cannot infer gateway model capabilities from arbitrary GPT
+    // IDs. Mark ChatGPT subscription slots as effort-capable so /effort and
+    // ultracode remain available; the proxy maps the selected level to the
+    // Responses API's reasoning.effort field.
+    let is_chatgpt_subscription = profile_uses_chatgpt(config, profile);
+    if is_chatgpt_subscription {
+        const CAPABILITIES: &str = "effort,xhigh_effort,max_effort";
+        cmd.env(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        )
+        .env(
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        )
+        .env(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+            CAPABILITIES,
+        );
+    }
+
+    for (k, v) in &profile.extra_env {
+        cmd.env(k, v);
+    }
+
+    // Claude Code's own /fast cannot select different provider semantics as
+    // /model moves across the unified catalog. Claudex supplies a route-aware
+    // command and sends only this random session ID to its loopback gateway.
+    cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1")
+        .env(crate::fast::FAST_SESSION_ENV, fast_session.id());
+    configure_custom_headers(&mut cmd, profile, fast_session.id());
+
+    // Apply after profile variables so telemetry/exporters cannot be
+    // accidentally re-enabled by an old profile or inherited shell setting.
+    crate::privacy::apply_private_environment(&mut cmd);
 
     let private_args = crate::privacy::enforce_private_settings(extra_args)?;
 
@@ -101,15 +175,14 @@ pub fn launch_claude(
     }
 
     // Keep Claudex-managed provider commands out of ordinary Claude sessions.
-    cmd.arg("--add-dir")
-        .arg(crate::integration::claude_integration_root()?);
+    cmd.arg("--add-dir").arg(integration_root);
 
     cmd.args(&private_args);
 
     tracing::info!(
         profile = %profile.name,
         model = %model,
-        proxy = %format!("http://{}:{}/proxy/{}", config.proxy_host, config.proxy_port, profile.name),
+        proxy = %proxy_base,
         noninteractive = %is_noninteractive,
         "launching claude"
     );
@@ -171,73 +244,6 @@ pub fn launch_claude(
     Ok(())
 }
 
-/// Build a Claude Code process with Claudex's local gateway, route-aware fast
-/// state, and privacy policy applied. Interactive and SDK-style frontends use
-/// the same environment so provider behavior cannot drift between surfaces.
-pub(crate) fn configured_claude_command(
-    config: &ClaudexConfig,
-    profile: &ProfileConfig,
-    model: &str,
-    fast_session_id: &str,
-) -> Result<Command> {
-    let mut cmd = create_claude_command(&config.claude_binary)?;
-    let proxy_base = format!(
-        "http://{}:{}/proxy/{}",
-        config.proxy_host, config.proxy_port, profile.name
-    );
-
-    // Do not set CLAUDE_CONFIG_DIR: project instructions, tools, and existing
-    // user settings remain available to the underlying agent harness.
-    cmd.env("ANTHROPIC_BASE_URL", proxy_base)
-        .env("ANTHROPIC_AUTH_TOKEN", "claudex-passthrough")
-        .env("ANTHROPIC_MODEL", model)
-        .env("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1");
-
-    configure_openai_picker_entry(&mut cmd, config, profile, model);
-
-    #[cfg(windows)]
-    cmd.env("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1");
-
-    for (family, configured) in [
-        ("HAIKU", profile.models.haiku.as_deref()),
-        ("SONNET", profile.models.sonnet.as_deref()),
-        ("OPUS", profile.models.opus.as_deref()),
-    ] {
-        let Some(configured) = configured else {
-            continue;
-        };
-        let resolved = config.resolve_model(configured);
-        cmd.env(format!("ANTHROPIC_DEFAULT_{family}_MODEL"), &resolved)
-            .env(
-                format!("ANTHROPIC_DEFAULT_{family}_MODEL_NAME"),
-                format!(
-                    "{resolved} · {}",
-                    model_provider_label(config, profile, &resolved)
-                ),
-            )
-            .env(
-                format!("ANTHROPIC_DEFAULT_{family}_MODEL_DESCRIPTION"),
-                "Connected locally through Claudex",
-            );
-        if model_uses_chatgpt(config, profile, &resolved) {
-            cmd.env(
-                format!("ANTHROPIC_DEFAULT_{family}_MODEL_SUPPORTED_CAPABILITIES"),
-                "effort,xhigh_effort,max_effort",
-            );
-        }
-    }
-
-    for (key, value) in &profile.extra_env {
-        cmd.env(key, value);
-    }
-
-    cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1")
-        .env(crate::fast::FAST_SESSION_ENV, fast_session_id);
-    configure_custom_headers(&mut cmd, profile, fast_session_id);
-    crate::privacy::apply_private_environment(&mut cmd);
-    Ok(cmd)
-}
-
 fn configure_custom_headers(command: &mut Command, profile: &ProfileConfig, session_id: &str) {
     let mut headers: Vec<String> = profile
         .custom_headers
@@ -257,31 +263,6 @@ fn profile_uses_chatgpt(config: &ClaudexConfig, profile: &ProfileConfig) -> bool
             .any(|target| config.find_profile(target).is_some_and(is_chatgpt_profile))
 }
 
-fn model_uses_chatgpt(config: &ClaudexConfig, profile: &ProfileConfig, model: &str) -> bool {
-    profile
-        .model_routes
-        .get(model)
-        .and_then(|target| config.find_profile(target))
-        .map_or_else(|| is_chatgpt_profile(profile), is_chatgpt_profile)
-}
-
-fn model_provider_label(
-    config: &ClaudexConfig,
-    profile: &ProfileConfig,
-    model: &str,
-) -> &'static str {
-    let target = profile
-        .model_routes
-        .get(model)
-        .and_then(|name| config.find_profile(name))
-        .unwrap_or(profile);
-    match target.provider_type {
-        crate::config::ProviderType::DirectAnthropic => "Anthropic",
-        crate::config::ProviderType::OpenAIResponses => "OpenAI",
-        crate::config::ProviderType::OpenAICompatible => "OpenAI-compatible provider",
-    }
-}
-
 fn is_chatgpt_profile(profile: &ProfileConfig) -> bool {
     profile.auth_type == AuthType::OAuth
         && profile.oauth_provider.as_ref().is_some_and(|provider| {
@@ -296,16 +277,27 @@ fn configure_openai_picker_entry(
     command: &mut Command,
     config: &ClaudexConfig,
     profile: &ProfileConfig,
-    model: &str,
 ) {
     // Claude Code's gateway discovery intentionally filters out model IDs
     // that do not begin with "claude" or "anthropic". Its documented custom
-    // entry is therefore used as a compatibility row for the legacy stock
-    // Claude surface. Joey's Claudex owns its normal `/model` picker and shows
-    // every connected OpenAI model there without inventing Claude-family IDs.
-    if !model_uses_chatgpt(config, profile, model) {
-        return;
+    // entry is therefore used for the connected ChatGPT model. Claudex's
+    // account-first flow currently exposes one OpenAI model, so a single
+    // custom entry covers the whole managed OpenAI account without inventing
+    // fake upstream model IDs.
+    let mut models: Vec<&str> = Vec::new();
+    if is_chatgpt_profile(profile) && !profile.default_model.is_empty() {
+        models.push(profile.default_model.as_str());
     }
+    models.extend(profile.model_routes.iter().filter_map(|(model, target)| {
+        config
+            .find_profile(target)
+            .filter(|target_profile| is_chatgpt_profile(target_profile))
+            .map(|_| model.as_str())
+    }));
+    models.sort_unstable();
+    let Some(model) = models.first() else {
+        return;
+    };
 
     const CAPABILITIES: &str = "effort,xhigh_effort,max_effort";
     command
@@ -395,12 +387,12 @@ mod tests {
             .unwrap();
         let mut command = Command::new("claude");
 
-        configure_openai_picker_entry(&mut command, &config, profile, "gpt-5.6-sol");
+        configure_openai_picker_entry(&mut command, &config, profile);
 
         assert!(profile_uses_chatgpt(&config, profile));
         assert_eq!(
             command_env(&command, "ANTHROPIC_CUSTOM_MODEL_OPTION").as_deref(),
-            Some("gpt-5.6-sol")
+            Some("gpt-5.6")
         );
         assert_eq!(
             command_env(
@@ -424,7 +416,7 @@ mod tests {
             .unwrap();
         let mut command = Command::new("claude");
 
-        configure_openai_picker_entry(&mut command, &config, profile, "claude-opus-4-8");
+        configure_openai_picker_entry(&mut command, &config, profile);
 
         assert!(!profile_uses_chatgpt(&config, profile));
         assert_eq!(command_env(&command, "ANTHROPIC_CUSTOM_MODEL_OPTION"), None);

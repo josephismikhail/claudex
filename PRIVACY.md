@@ -6,11 +6,11 @@ output anywhere for telemetry. It forwards model content only to the provider
 and model the user selects. It has no telemetry or crash-reporting SDK and
 performs no automatic update checks.
 
-The `/model` authentication flow uses a loopback-only page bundled into the binary.
+The `/models` account manager is a loopback-only page bundled into the binary.
 It loads no third-party scripts, fonts, images, or styles. Browser mutations
 require the page's exact origin. Account metadata is written atomically to
-`accounts.json` in the platform Claudex configuration directory; tokens and API
-keys are stored only in the operating system credential store.
+`~/.config/claudex/accounts.json`; tokens and API keys are stored only in the
+operating system credential store.
 
 ## Default runtime guarantees
 
@@ -37,8 +37,7 @@ provider is local (for example Ollama, LM Studio, or vLLM). Network access can
 still occur when you explicitly:
 
 - send a model request to a configured remote provider;
-- connect OpenAI, complete OAuth login, retrieve that signed-in account's model
-  catalog, or refresh its token;
+- connect OpenAI, complete OAuth login, or refresh its token;
 - invoke `/usage`, which makes an authenticated request to OpenAI's subscription
   usage endpoint and prints the returned limits locally;
 - connect Anthropic, which validates the supplied API key and retrieves that

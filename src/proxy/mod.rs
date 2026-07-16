@@ -380,6 +380,6 @@ mod tests {
         assert!(response["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("/model"));
+            .contains("/models"));
     }
 }

@@ -1,10 +1,10 @@
 ---
-title: Joey's Claudex, one session, multiple providers
-description: Authenticate providers and switch account models from a local terminal UI
+title: One Claude Code session, multiple providers
+description: Connect providers in-session and switch models without restarting Claude Code
 template: splash
 hero:
   title: Claudex
-  tagline: Type claudex. Authenticate OpenAI or Anthropic from /model. Switch providers without leaving the session.
+  tagline: Start Claude Code first. Add OpenAI or Anthropic from /models. Switch providers with /model in the same session.
   actions:
     - text: Install Claudex
       link: /en/installation/
@@ -24,18 +24,17 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 claudex
 ```
 
-Claudex opens its own **Joey's Claudex** terminal while retaining the installed
-Claude agent harness underneath. A brand-new installation shows `/model to
-authenticate`. Run `/model`, choose a provider, finish authentication in the
-browser, and select a returned model. The picker updates without restarting or
-choosing a profile.
+Claudex immediately opens Claude Code—even on a brand-new installation with no
+provider models. Run `/models` inside the session to open the localhost account
+manager, connect a provider, then run `/model`. The live catalog updates without
+restarting Claude Code or choosing a profile.
 
 <CardGrid stagger>
   <Card title="No profile picker" icon="rocket">
     Bare `claudex` always enters one unified session. Connected accounts persist across exits and restarts.
   </Card>
-  <Card title="Provider-first model picker" icon="laptop">
-    `/model` lists providers on first run, then stacks every connected account's models with an option to authenticate another provider.
+  <Card title="Local account manager" icon="laptop">
+    `/models` opens a bundled loopback page with no remote scripts, fonts, images, or analytics.
   </Card>
   <Card title="Mixed-provider models" icon="random">
     Exact model IDs route GPT requests to OpenAI and Claude requests to Anthropic while the conversation and subagent harness stay intact.
@@ -55,7 +54,7 @@ choosing a profile.
 
 | Provider | Authentication | Catalog |
 |---|---|---|
-| OpenAI | ChatGPT browser OAuth | Picker-visible models returned for that account |
+| OpenAI | ChatGPT browser OAuth | GPT-5.6 |
 | Anthropic API | Console API key | Models returned for that key by Anthropic's Models API |
 
 Anthropic prohibits third-party gateways from routing Claude Free, Pro, or Max

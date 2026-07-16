@@ -1,8 +1,8 @@
 [package]
 name = "claudex"
-version = "0.4.0"
+version = "0.3.3"
 edition = "2021"
-description = "Local multi-provider coding-agent terminal and model gateway"
+description = "Local multi-provider model gateway for Claude Code"
 license = "MIT"
 repository = "https://github.com/josephismikhail/claudex"
 homepage = "https://github.com/josephismikhail/claudex"

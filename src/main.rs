@@ -12,7 +12,6 @@ mod privacy;
 mod process;
 mod proxy;
 mod router;
-mod session;
 mod sets;
 mod terminal;
 mod tui;
@@ -225,10 +224,7 @@ async fn main() -> Result<()> {
             integration::ensure_models_skill()?;
             let store = accounts::apply_to_config(&mut config)?;
             integration::sync_account_skills(&store)?;
-            if !proxy::is_proxy_reachable(&config.proxy_host, config.proxy_port).await {
-                start_proxy_background(&config).await?;
-            }
-            session::run_session(&mut config).await?;
+            run_profile_session(&config, accounts::SESSION_PROFILE_NAME, None, &[], false).await?;
         }
     }
 
