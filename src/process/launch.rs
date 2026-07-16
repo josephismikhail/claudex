@@ -16,7 +16,7 @@ pub fn launch_claude(
     extra_args: &[String],
     hyperlinks_override: bool,
 ) -> Result<()> {
-    let fast_session = crate::openai::FastSession::create()?;
+    let fast_session = crate::fast::FastSession::create()?;
     let integration_root = crate::integration::claude_integration_root()?;
     let proxy_base = format!(
         "http://{}:{}/proxy/{}",
@@ -90,12 +90,11 @@ pub fn launch_claude(
         cmd.env(k, v);
     }
 
-    // Claude Code's own /fast is tied to Anthropic organization state and
-    // cannot react when OpenAI is connected through /models during an existing
-    // session. Claudex supplies a live-managed command and sends only this
-    // random session ID to its loopback gateway.
+    // Claude Code's own /fast cannot select different provider semantics as
+    // /model moves across the unified catalog. Claudex supplies a route-aware
+    // command and sends only this random session ID to its loopback gateway.
     cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1")
-        .env(crate::openai::FAST_SESSION_ENV, fast_session.id());
+        .env(crate::fast::FAST_SESSION_ENV, fast_session.id());
     configure_custom_headers(&mut cmd, profile, fast_session.id());
 
     // Apply after profile variables so telemetry/exporters cannot be
@@ -109,7 +108,7 @@ pub fn launch_claude(
         cmd.arg("--no-chrome");
     }
 
-    // Keep OpenAI-only commands out of ordinary Claude Code sessions.
+    // Keep Claudex-managed provider commands out of ordinary Claude sessions.
     cmd.arg("--add-dir").arg(integration_root);
 
     cmd.args(&private_args);
@@ -183,13 +182,10 @@ fn configure_custom_headers(command: &mut Command, profile: &ProfileConfig, sess
     let mut headers: Vec<String> = profile
         .custom_headers
         .iter()
-        .filter(|(name, _)| !name.eq_ignore_ascii_case(crate::openai::FAST_SESSION_HEADER))
+        .filter(|(name, _)| !name.eq_ignore_ascii_case(crate::fast::FAST_SESSION_HEADER))
         .map(|(name, value)| format!("{name}:{value}"))
         .collect();
-    headers.push(format!(
-        "{}:{session_id}",
-        crate::openai::FAST_SESSION_HEADER
-    ));
+    headers.push(format!("{}:{session_id}", crate::fast::FAST_SESSION_HEADER));
     command.env("ANTHROPIC_CUSTOM_HEADERS", headers.join(","));
 }
 
@@ -366,7 +362,7 @@ mod tests {
             custom_headers: std::collections::HashMap::from([
                 ("X-Test".to_string(), "ok".to_string()),
                 (
-                    crate::openai::FAST_SESSION_HEADER.to_string(),
+                    crate::fast::FAST_SESSION_HEADER.to_string(),
                     "attacker-controlled".to_string(),
                 ),
             ]),

@@ -1,146 +1,12 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use http::HeaderMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use crate::accounts::{AccountProvider, AccountStore, OPENAI_PROFILE_NAME};
-use crate::config::{ClaudexConfig, ProfileConfig};
-use crate::oauth::{AuthType, OAuthProvider};
+use crate::accounts::{AccountProvider, OPENAI_PROFILE_NAME};
+use crate::config::ClaudexConfig;
 
-pub const FAST_SESSION_ENV: &str = "CLAUDEX_FAST_SESSION";
-pub const FAST_SESSION_HEADER: &str = "x-claudex-fast-session";
-
-const FAST_STATE_VERSION: u32 = 1;
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
-
-pub fn is_subscription_profile(profile: &ProfileConfig) -> bool {
-    profile.auth_type == AuthType::OAuth
-        && profile.oauth_provider.as_ref().is_some_and(|provider| {
-            matches!(
-                provider.normalize(),
-                OAuthProvider::Chatgpt | OAuthProvider::Openai
-            )
-        })
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct FastState {
-    version: u32,
-    enabled: bool,
-}
-
-/// Per-Claude-process state used by the managed `/fast` skill and the local
-/// gateway. The random ID is sent to the loopback proxy, never upstream.
-pub struct FastSession {
-    id: String,
-    path: PathBuf,
-}
-
-impl FastSession {
-    pub fn create() -> Result<Self> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let path = fast_state_path(&id)?;
-        write_fast_state(&path, false)?;
-        Ok(Self { id, path })
-    }
-
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-}
-
-impl Drop for FastSession {
-    fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_file(&self.path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::debug!(path = %self.path.display(), %error, "failed to clean fast-mode session state");
-            }
-        }
-    }
-}
-
-pub fn run_fast_command(action: Option<crate::cli::FastAction>) -> Result<()> {
-    let store = AccountStore::load()?;
-    if !store.has_provider(AccountProvider::Openai) {
-        anyhow::bail!("/fast is available only when an OpenAI subscription is connected");
-    }
-
-    let id = std::env::var(FAST_SESSION_ENV)
-        .context("/fast is available only inside a running Claudex session")?;
-    let path = fast_state_path(&id)?;
-    if !path.exists() {
-        anyhow::bail!("this Claudex session is no longer active");
-    }
-
-    let current = read_fast_state_path(&path).unwrap_or(false);
-    let enabled = match action {
-        Some(crate::cli::FastAction::On) => true,
-        Some(crate::cli::FastAction::Off) => false,
-        Some(crate::cli::FastAction::Status) => current,
-        None => !current,
-    };
-    if !matches!(action, Some(crate::cli::FastAction::Status)) {
-        write_fast_state(&path, enabled)?;
-    }
-
-    if enabled {
-        println!(
-            "Fast mode ON - OpenAI priority access (about 1.5x faster; uses subscription credits faster)."
-        );
-    } else {
-        println!("Fast mode OFF - OpenAI standard speed.");
-    }
-    Ok(())
-}
-
-/// Read the state selected by a request from Claude Code. Invalid IDs and
-/// missing files are treated as disabled, preventing arbitrary filesystem
-/// reads through the loopback HTTP endpoint.
-pub fn fast_enabled(headers: &HeaderMap) -> bool {
-    let Some(id) = headers
-        .get(FAST_SESSION_HEADER)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
-    let Ok(path) = fast_state_path(id) else {
-        return false;
-    };
-    read_fast_state_path(&path).unwrap_or(false)
-}
-
-fn fast_state_path(id: &str) -> Result<PathBuf> {
-    let parsed = uuid::Uuid::parse_str(id).context("invalid Claudex fast-mode session ID")?;
-    Ok(ClaudexConfig::config_dir()?
-        .join("sessions")
-        .join(format!("{}.json", parsed.hyphenated())))
-}
-
-fn write_fast_state(path: &std::path::Path, enabled: bool) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let state = FastState {
-        version: FAST_STATE_VERSION,
-        enabled,
-    };
-    let bytes = serde_json::to_vec(&state).context("failed to serialize fast-mode state")?;
-    crate::config::write_file_atomically(path, &bytes)
-        .with_context(|| format!("failed to save fast-mode state at {}", path.display()))
-}
-
-fn read_fast_state_path(path: &std::path::Path) -> Result<bool> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("failed to read fast-mode state at {}", path.display()))?;
-    let state: FastState = serde_json::from_slice(&bytes)
-        .with_context(|| format!("invalid fast-mode state at {}", path.display()))?;
-    if state.version > FAST_STATE_VERSION {
-        anyhow::bail!("fast-mode state is newer than this Claudex version");
-    }
-    Ok(state.enabled)
-}
 
 pub async fn print_subscription_usage(config: &mut ClaudexConfig) -> Result<()> {
     let store = crate::accounts::apply_to_config(config)?;
@@ -424,25 +290,6 @@ mod tests {
         assert!(rendered.contains("5-hour window: 57.5% left; resets in 2h 0m"));
         assert!(rendered.contains("7-day window: 25% left; resets in 2d 0h"));
         assert!(rendered.contains("Credit balance: 12.50"));
-    }
-
-    #[test]
-    fn rejects_fast_state_path_traversal() {
-        assert!(fast_state_path("../../accounts.json").is_err());
-    }
-
-    #[test]
-    fn request_header_reads_only_its_session_state() {
-        let session = FastSession::create().unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            FAST_SESSION_HEADER,
-            session.id().parse().expect("valid header value"),
-        );
-        assert!(!fast_enabled(&headers));
-
-        write_fast_state(&session.path, true).unwrap();
-        assert!(fast_enabled(&headers));
     }
 
     #[tokio::test]

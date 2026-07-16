@@ -70,7 +70,7 @@ pub enum Commands {
         action: Option<ModelsAction>,
     },
 
-    /// Toggle OpenAI subscription priority processing for this Claudex session
+    /// Toggle provider-aware fast processing for this Claudex session
     #[command(hide = true)]
     Fast {
         #[arg(value_enum)]

@@ -187,7 +187,7 @@ async fn complete_openai_connection(
         .invalidate(crate::accounts::OPENAI_PROFILE_NAME)
         .await;
     store.save()?;
-    crate::integration::sync_openai_skills(true)?;
+    crate::integration::sync_account_skills(&store)?;
     let mut config = state.config.write().await;
     crate::accounts::apply_store_to_config(&mut config, &store);
     Ok(())
@@ -218,6 +218,7 @@ pub async fn connect_anthropic(
         let record = store.upsert_with_models(AccountProvider::Anthropic, models);
         crate::accounts::store_api_key(&record.credential_key, api_key)?;
         store.save()?;
+        crate::integration::sync_account_skills(&store)?;
         let mut config = state.config.write().await;
         crate::accounts::apply_store_to_config(&mut config, &store);
         Ok::<(), anyhow::Error>(())
@@ -292,9 +293,7 @@ pub async fn remove_account(
             tracing::warn!(account = %record.id, %error, "credential was already absent or could not be removed");
         }
         store.save()?;
-        crate::integration::sync_openai_skills(
-            store.has_provider(AccountProvider::Openai),
-        )?;
+        crate::integration::sync_account_skills(&store)?;
         let mut config = state.config.write().await;
         crate::accounts::apply_store_to_config(&mut config, &store);
         Ok::<(), anyhow::Error>(())
