@@ -89,20 +89,6 @@ impl FastSession {
     pub fn id(&self) -> &str {
         &self.id
     }
-
-    pub fn enabled(&self) -> bool {
-        read_fast_state_path(&self.path).unwrap_or(false)
-    }
-
-    pub fn set_enabled(&self, enabled: bool) -> Result<()> {
-        write_fast_state(&self.path, enabled)
-    }
-
-    pub fn toggle(&self) -> Result<bool> {
-        let enabled = !self.enabled();
-        self.set_enabled(enabled)?;
-        Ok(enabled)
-    }
 }
 
 impl Drop for FastSession {

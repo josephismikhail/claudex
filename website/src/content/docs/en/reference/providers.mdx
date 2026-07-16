@@ -3,15 +3,15 @@ title: Provider Compatibility
 description: Account-first providers and advanced endpoint compatibility
 ---
 
-## Managed in-session accounts
+## Managed accounts
 
 | Provider | Protocol | Authentication | Model catalog |
 |---|---|---|---|
-| OpenAI | Responses API | ChatGPT browser OAuth | Picker-visible models returned for the account |
+| OpenAI | Responses API | ChatGPT browser OAuth | GPT-5.6 |
 | Anthropic | Messages API | Console API key | Discovered from `/v1/models` for the key |
 
-Both providers can be connected at the same time. Use `/model` to authenticate
-accounts and switch between their models in one Joey's Claudex session.
+Both providers can be connected at the same time. Use `claudex models open` to
+manage accounts and Claude Code's built-in `/model` to switch between them.
 
 Claude Free, Pro, and Max OAuth credentials are not supported because
 Anthropic's policy prohibits third-party gateways from offering or routing
@@ -27,9 +27,9 @@ The legacy configuration engine remains compatible with these endpoint types:
 | `OpenAICompatible` | OpenRouter, Grok, DeepSeek, Kimi, GLM, Groq, Mistral, Together, Perplexity, Cerebras, Ollama, LM Studio, vLLM, Azure OpenAI |
 | `OpenAIResponses` | OpenAI Responses-compatible gateways |
 
-Custom endpoints are configured in `config.toml` and launched explicitly with
-`claudex run <legacy-profile>`. They are retained for compatibility and
-power-user use; the normal OpenAI and Anthropic flow does not require profiles.
+Custom endpoints are configured in `config.toml` and automatically join the
+unified bare session. They are retained for compatibility and power-user use;
+the normal OpenAI and Anthropic flow does not require profiles.
 
 Provider calls are demand-driven. Starting Claudex or its proxy does not probe
 any configured endpoint. Explicit account connection, connectivity tests, and

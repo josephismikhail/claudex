@@ -21,7 +21,7 @@ export default defineConfig({
         de: 'Claudex',
         pl: 'Claudex',
       },
-      description: 'Local multi-provider coding-agent terminal and model gateway',
+      description: 'Local multi-provider model gateway for Claude Code',
       defaultLocale: 'en',
       locales: {
         en: { label: 'English' },
@@ -99,7 +99,7 @@ export default defineConfig({
             '@context': 'https://schema.org',
             '@type': 'SoftwareApplication',
             name: 'Claudex',
-            description: 'Local multi-provider coding-agent terminal and model gateway',
+            description: 'Local multi-provider model gateway for Claude Code',
             url: 'https://claudex.space',
             applicationCategory: 'DeveloperApplication',
             operatingSystem: 'macOS, Linux, Windows',

@@ -83,12 +83,11 @@ fn models_for_profile(config: &ClaudexConfig, profile: &ProfileConfig) -> Vec<Va
 }
 
 fn model_entry(model: &str, target: &ProfileConfig) -> Value {
-    let provider = provider_label(target);
     json!({
         "id": model,
         "type": "model",
         "object": "model",
-        "display_name": format!("{model} · {provider}"),
+        "display_name": model,
         "created_at": "1970-01-01T00:00:00Z",
         "created": 0,
         "owned_by": target.name,
@@ -99,14 +98,6 @@ fn model_entry(model: &str, target: &ProfileConfig) -> Value {
             ProviderType::OpenAIResponses => "openai-responses",
         },
     })
-}
-
-fn provider_label(target: &ProfileConfig) -> &'static str {
-    match target.provider_type {
-        ProviderType::DirectAnthropic => "Anthropic",
-        ProviderType::OpenAIResponses => "OpenAI",
-        ProviderType::OpenAICompatible => "OpenAI-compatible provider",
-    }
 }
 
 fn model_list_response(models: Vec<Value>) -> Response {
@@ -176,7 +167,6 @@ mod tests {
             .unwrap();
         assert_eq!(routed["x-claudex-profile"], "claude-max");
         assert_eq!(routed["x-claudex-provider"], "anthropic");
-        assert_eq!(routed["display_name"], "claude-opus · Anthropic");
     }
 
     #[test]
