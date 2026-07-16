@@ -33,6 +33,7 @@ impl ProviderAdapter for DirectAnthropicAdapter {
         builder: RequestBuilder,
         profile: &ProfileConfig,
         inbound_headers: &HeaderMap,
+        translated_body: &Value,
     ) -> RequestBuilder {
         let version = inbound_headers
             .get("anthropic-version")
@@ -43,9 +44,15 @@ impl ProviderAdapter for DirectAnthropicAdapter {
                 .oauth_provider
                 .as_ref()
                 .is_some_and(|provider| provider.normalize() == OAuthProvider::Claude);
+        let is_fast = crate::fast::is_anthropic_console_profile(profile)
+            && translated_body.get("speed").and_then(Value::as_str) == Some("fast")
+            && translated_body
+                .get("model")
+                .and_then(Value::as_str)
+                .is_some_and(crate::fast::supports_anthropic_fast_model);
         let mut b = builder.header("anthropic-version", version);
 
-        let beta = merged_beta_header(inbound_headers, is_claude_oauth);
+        let beta = merged_beta_header(inbound_headers, profile, is_claude_oauth, is_fast);
         if !beta.is_empty() {
             b = b.header("anthropic-beta", beta);
         }
@@ -73,12 +80,31 @@ impl ProviderAdapter for DirectAnthropicAdapter {
     }
 }
 
-fn merged_beta_header(inbound_headers: &HeaderMap, include_oauth: bool) -> String {
+fn merged_beta_header(
+    inbound_headers: &HeaderMap,
+    profile: &ProfileConfig,
+    include_oauth: bool,
+    include_fast: bool,
+) -> String {
     let mut values = Vec::new();
     for header in inbound_headers.get_all("anthropic-beta") {
         let Ok(header) = header.to_str() else {
             continue;
         };
+        for value in header
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !values.iter().any(|existing| existing == value) {
+                values.push(value.to_string());
+            }
+        }
+    }
+    for (name, header) in &profile.custom_headers {
+        if !name.eq_ignore_ascii_case("anthropic-beta") {
+            continue;
+        }
         for value in header
             .split(',')
             .map(str::trim)
@@ -95,6 +121,13 @@ fn merged_beta_header(inbound_headers: &HeaderMap, include_oauth: bool) -> Strin
             .any(|value| value == crate::oauth::exchange::CLAUDE_OAUTH_BETA)
     {
         values.push(crate::oauth::exchange::CLAUDE_OAUTH_BETA.to_string());
+    }
+    if include_fast
+        && !values
+            .iter()
+            .any(|value| value == crate::fast::ANTHROPIC_FAST_BETA)
+    {
+        values.push(crate::fast::ANTHROPIC_FAST_BETA.to_string());
     }
     values.join(",")
 }
@@ -126,6 +159,7 @@ mod tests {
                 reqwest::Client::new().post("https://example.test"),
                 &profile,
                 &inbound,
+                &Value::Null,
             )
             .build()
             .unwrap();
@@ -157,6 +191,7 @@ mod tests {
                 reqwest::Client::new().post("https://example.test"),
                 &profile,
                 &HeaderMap::new(),
+                &Value::Null,
             )
             .build()
             .unwrap();
@@ -165,5 +200,46 @@ mod tests {
         assert!(!request.headers().contains_key("authorization"));
         assert!(!request.headers().contains_key("anthropic-beta"));
         assert_eq!(request.headers()["anthropic-version"], "2023-06-01");
+    }
+
+    #[test]
+    fn anthropic_fast_mode_merges_required_and_existing_beta_headers() {
+        let profile = ProfileConfig {
+            provider_type: crate::config::ProviderType::DirectAnthropic,
+            base_url: "https://api.anthropic.com".to_string(),
+            auth_type: AuthType::ApiKey,
+            api_key: "api-key".to_string(),
+            custom_headers: HashMap::from([(
+                "Anthropic-Beta".to_string(),
+                "custom-beta,tools-2025-01-01".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let inbound = HeaderMap::from_iter([(
+            "anthropic-beta".parse().unwrap(),
+            "tools-2025-01-01".parse().unwrap(),
+        )]);
+        let body = serde_json::json!({
+            "model": "claude-opus-4-8",
+            "speed": "fast"
+        });
+
+        let request = DirectAnthropicAdapter
+            .apply_auth(
+                reqwest::Client::new().post("https://example.test"),
+                &profile,
+                &inbound,
+                &body,
+            )
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            request.headers()["anthropic-beta"],
+            format!(
+                "tools-2025-01-01,custom-beta,{}",
+                crate::fast::ANTHROPIC_FAST_BETA
+            )
+        );
     }
 }

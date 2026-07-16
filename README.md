@@ -45,17 +45,22 @@ Inside Claude Code:
    the same session. On later launches, bare `/model` lists the persisted
    models in its picker.
 
-When OpenAI is connected, two OpenAI-only commands appear in that same session:
+Provider-aware commands appear in that same session as accounts are connected:
 
-- `/fast` toggles OpenAI priority processing for the current Claudex session.
-  It uses the same `service_tier: "priority"` request as
-  [Codex fast mode](https://learn.chatgpt.com/docs/agent-configuration/speed.md)
-  and is about 1.5x faster, with accelerated subscription-credit consumption.
+- `/fast` appears when OpenAI is connected or the Anthropic account exposes
+  Claude Opus 4.8. It is one session toggle, but the gateway chooses the fast
+  implementation for each selected model: OpenAI routes use
+  `service_tier: "priority"` (about 1.5x), while Anthropic Opus 4.8 routes use
+  `speed: "fast"` with Anthropic's required research-preview beta header (up
+  to 2.5x output speed). Other Anthropic models remain at standard speed.
 - `/usage` fetches a live OpenAI subscription snapshot and shows the percentage
   remaining in each returned usage window and when it resets.
 
-Both commands disappear when the OpenAI account is removed. `/usage` is not
-shown for API-key providers or Anthropic accounts.
+`/usage` disappears when the OpenAI account is removed. `/fast` remains if an
+eligible Anthropic route is still connected; otherwise it disappears too.
+Anthropic fast mode requires provider access and premium billing. See the
+[OpenAI fast-mode documentation](https://learn.chatgpt.com/docs/agent-configuration/speed.md)
+and [Anthropic fast-mode documentation](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 
 Connected accounts survive exits and restarts. Bare `claudex` always returns to
 the unified session, whether one provider or several are connected.
@@ -89,7 +94,7 @@ Anthropic through a Console API key only; see Anthropic's
 - The `/models` command is installed as a managed personal Claude Code skill at
   `~/.claude/skills/models/SKILL.md`. An existing user-authored `/models` skill
   is preserved; Claudex installs `/claudex-models` instead.
-- OpenAI-only `/fast` and `/usage` skills are stored under
+- The provider-aware `/fast` skill and OpenAI-only `/usage` skill are stored under
   `~/.config/claudex/claude-integration/` and loaded with `--add-dir`, so they
   do not replace commands in ordinary Claude Code sessions. Claude Code watches
   that directory, allowing the commands to appear or disappear after `/models`
@@ -139,9 +144,11 @@ subagent harness. Claude Code's `ultracode` effort is translated to GPT-5.6
 `reasoning.effort = "xhigh"`.
 
 When `/fast` is on, the same translation path adds
-`service_tier = "priority"` only for the connected OpenAI subscription route.
-The local gateway strips client-supplied fast fields and ignores the session
-state for every other provider.
+`service_tier = "priority"` to connected OpenAI subscription routes. Official
+Anthropic Console routes receive `speed = "fast"` plus
+`anthropic-beta: fast-mode-2026-02-01` only for Claude Opus 4.8. The local
+gateway strips client-supplied fast fields, so unsupported providers and Claude
+models cannot opt themselves into premium processing.
 
 Claudex enables Claude Code's gateway model discovery automatically. Claude
 Code refreshes that picker at process startup, so a provider added during the

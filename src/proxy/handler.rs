@@ -109,13 +109,13 @@ pub async fn handle_messages(
     };
     normalize_claude_oauth_base_url(&mut profile);
 
-    // `speed` is a Claude Code fast-mode field, not a client-controlled route
-    // to paid priority processing. Recreate it only for a connected ChatGPT
-    // subscription and a valid live Claudex session state.
+    // `speed` is not a client-controlled route to premium processing. Recreate
+    // it only from valid per-session state, choosing provider semantics after
+    // the selected model has resolved to its actual account profile.
     apply_fast_mode(
         &mut body_value,
         &profile,
-        crate::openai::fast_enabled(&headers),
+        crate::fast::fast_enabled(&headers),
     );
 
     if is_forbidden_claude_subscription(&profile) {
@@ -295,8 +295,21 @@ fn apply_fast_mode(body: &mut Value, profile: &ProfileConfig, session_enabled: b
     let Some(object) = body.as_object_mut() else {
         return;
     };
+    let model = object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     object.remove("speed");
-    if session_enabled && crate::openai::is_subscription_profile(profile) {
+    if !session_enabled {
+        return;
+    }
+
+    let openai_fast = crate::fast::is_openai_subscription_profile(profile);
+    let anthropic_fast = crate::fast::is_anthropic_console_profile(profile)
+        && model
+            .as_deref()
+            .is_some_and(crate::fast::supports_anthropic_fast_model);
+    if openai_fast || anthropic_fast {
         object.insert("speed".to_string(), Value::String("fast".to_string()));
     }
 }
@@ -605,10 +618,17 @@ async fn try_forward(
         .post(&url)
         .header("content-type", "application/json");
 
-    req = adapter.apply_auth(req, profile, headers);
+    req = adapter.apply_auth(req, profile, headers, &translated.body);
     req = adapter.apply_extra_headers(req, profile);
 
     for (k, v) in &profile.custom_headers {
+        // DirectAnthropicAdapter merges all beta values with any provider fast
+        // beta so custom and Claude Code betas are never overwritten.
+        if profile.provider_type == crate::config::ProviderType::DirectAnthropic
+            && k.eq_ignore_ascii_case("anthropic-beta")
+        {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
     }
 
@@ -899,13 +919,15 @@ mod tests {
     }
 
     #[test]
-    fn fast_mode_is_added_only_to_openai_subscription_requests() {
+    fn fast_mode_selects_each_providers_supported_request_shape() {
         let openai = ProfileConfig {
             auth_type: AuthType::OAuth,
             oauth_provider: Some(crate::oauth::OAuthProvider::Chatgpt),
             ..Default::default()
         };
         let anthropic = ProfileConfig {
+            provider_type: crate::config::ProviderType::DirectAnthropic,
+            base_url: "https://api.anthropic.com".to_string(),
             auth_type: AuthType::ApiKey,
             ..Default::default()
         };
@@ -914,9 +936,13 @@ mod tests {
         apply_fast_mode(&mut openai_body, &openai, true);
         assert_eq!(openai_body["speed"], "fast");
 
-        let mut anthropic_body = serde_json::json!({"model": "claude-opus-4-8", "speed": "fast"});
+        let mut anthropic_body = serde_json::json!({"model": "claude-opus-4-8"});
         apply_fast_mode(&mut anthropic_body, &anthropic, true);
-        assert!(anthropic_body.get("speed").is_none());
+        assert_eq!(anthropic_body["speed"], "fast");
+
+        let mut unsupported_body = serde_json::json!({"model": "claude-sonnet-5", "speed": "fast"});
+        apply_fast_mode(&mut unsupported_body, &anthropic, true);
+        assert!(unsupported_body.get("speed").is_none());
     }
 
     #[test]

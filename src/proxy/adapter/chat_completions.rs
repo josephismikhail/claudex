@@ -36,6 +36,7 @@ impl ProviderAdapter for ChatCompletionsAdapter {
         builder: RequestBuilder,
         profile: &ProfileConfig,
         _inbound_headers: &HeaderMap,
+        _translated_body: &Value,
     ) -> RequestBuilder {
         if !profile.api_key.is_empty() {
             if profile.extra_env.contains_key("AZURE_AUTH")

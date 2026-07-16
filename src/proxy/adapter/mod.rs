@@ -50,6 +50,7 @@ pub trait ProviderAdapter: Send + Sync {
         builder: RequestBuilder,
         profile: &ProfileConfig,
         inbound_headers: &HeaderMap,
+        translated_body: &Value,
     ) -> RequestBuilder;
 
     /// 设置额外头（如 ChatGPT-Account-ID），默认无操作

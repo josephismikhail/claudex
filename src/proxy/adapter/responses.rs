@@ -35,6 +35,7 @@ impl ProviderAdapter for ResponsesAdapter {
         builder: RequestBuilder,
         profile: &ProfileConfig,
         _inbound_headers: &HeaderMap,
+        _translated_body: &Value,
     ) -> RequestBuilder {
         if !profile.api_key.is_empty() {
             builder.header("Authorization", format!("Bearer {}", profile.api_key))

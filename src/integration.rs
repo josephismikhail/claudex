@@ -40,20 +40,20 @@ provider is connected, they can use `/model` to switch models without leaving
 this session.
 "#;
 
-const OPENAI_FAST_SKILL: &str = r#"---
+const ROUTE_AWARE_FAST_SKILL: &str = r#"---
 name: fast
-description: Toggle OpenAI subscription priority processing for this Claudex session.
+description: Toggle provider-aware fast processing for this Claudex session.
 disable-model-invocation: true
 ---
 <!-- claudex-managed-openai-fast-skill:v1 -->
 
-Toggle this Claudex session's OpenAI fast mode now:
+Toggle this Claudex session's provider-aware fast mode now:
 
 !`claudex fast`
 
-Repeat the command output verbatim and do nothing else. The local gateway uses
-OpenAI priority processing while fast mode is on, which is about 1.5x faster
-and consumes subscription credits at the provider's accelerated rate.
+Repeat the command output verbatim and do nothing else. While fast mode is on,
+the local gateway chooses the connected provider's supported fast path for each
+request and leaves unsupported provider or model routes at standard speed.
 "#;
 
 const OPENAI_USAGE_SKILL: &str = r#"---
@@ -125,7 +125,7 @@ fn write_managed_skill(path: &PathBuf, content: &str) -> Result<()> {
         .with_context(|| format!("failed to install Claude Code skill at {}", path.display()))
 }
 
-/// Directory passed to Claude Code with `--add-dir`. Keeping OpenAI-specific
+/// Directory passed to Claude Code with `--add-dir`. Keeping provider-specific
 /// commands here makes them visible only in Claudex sessions, while the
 /// always-present parent directory lets Claude Code detect account changes
 /// without a restart.
@@ -135,23 +135,29 @@ pub fn claude_integration_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-pub fn sync_openai_skills(connected: bool) -> Result<()> {
+pub fn sync_account_skills(store: &crate::accounts::AccountStore) -> Result<()> {
     let root = claude_integration_root()?;
-    sync_openai_skills_at(&root, connected)
+    let fast_available = crate::fast::FastAvailability::from_store(store).any();
+    let openai_connected = store.has_provider(crate::accounts::AccountProvider::Openai);
+    sync_provider_skills_at(&root, fast_available, openai_connected)
 }
 
-fn sync_openai_skills_at(root: &std::path::Path, connected: bool) -> Result<()> {
+fn sync_provider_skills_at(
+    root: &std::path::Path,
+    fast_available: bool,
+    openai_connected: bool,
+) -> Result<()> {
     let skills = root.join(".claude").join("skills");
     std::fs::create_dir_all(&skills)?;
     sync_managed_skill(
         &skills.join("fast").join("SKILL.md"),
-        OPENAI_FAST_SKILL,
+        ROUTE_AWARE_FAST_SKILL,
         OPENAI_FAST_MARKER,
-        connected,
+        fast_available,
     )?;
     sync_managed_skill(
         &skills.join("usage").join("SKILL.md"),
-        if connected {
+        if openai_connected {
             OPENAI_USAGE_SKILL
         } else {
             HIDDEN_OPENAI_USAGE_SKILL
@@ -301,26 +307,33 @@ mod tests {
     }
 
     #[test]
-    fn openai_skills_appear_and_disappear_with_the_account() {
+    fn fast_and_usage_skills_follow_their_provider_availability() {
         let root = tempfile::tempdir().unwrap();
         let fast = root.path().join(".claude/skills/fast/SKILL.md");
         let usage = root.path().join(".claude/skills/usage/SKILL.md");
 
-        sync_openai_skills_at(root.path(), false).unwrap();
+        sync_provider_skills_at(root.path(), false, false).unwrap();
         assert!(!fast.exists());
         assert!(std::fs::read_to_string(&usage)
             .unwrap()
             .contains("user-invocable: false"));
 
-        sync_openai_skills_at(root.path(), true).unwrap();
+        // An eligible Anthropic account exposes /fast without exposing the
+        // OpenAI-only /usage command.
+        sync_provider_skills_at(root.path(), true, false).unwrap();
         assert!(std::fs::read_to_string(&fast)
             .unwrap()
             .contains("!`claudex fast`"));
         assert!(std::fs::read_to_string(&usage)
             .unwrap()
+            .contains("user-invocable: false"));
+
+        sync_provider_skills_at(root.path(), true, true).unwrap();
+        assert!(std::fs::read_to_string(&usage)
+            .unwrap()
             .contains("!`claudex usage`"));
 
-        sync_openai_skills_at(root.path(), false).unwrap();
+        sync_provider_skills_at(root.path(), false, false).unwrap();
         assert!(!fast.exists());
         assert!(std::fs::read_to_string(&usage)
             .unwrap()

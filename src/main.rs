@@ -4,6 +4,7 @@ mod accounts;
 mod cli;
 mod config;
 mod context;
+mod fast;
 mod integration;
 mod oauth;
 mod openai;
@@ -212,7 +213,7 @@ async fn main() -> Result<()> {
         },
 
         Some(Commands::Fast { action }) => {
-            openai::run_fast_command(action)?;
+            fast::run_fast_command(action)?;
         }
 
         Some(Commands::Usage) => {
@@ -222,7 +223,7 @@ async fn main() -> Result<()> {
         None => {
             integration::ensure_models_skill()?;
             let store = accounts::apply_to_config(&mut config)?;
-            integration::sync_openai_skills(store.has_provider(accounts::AccountProvider::Openai))?;
+            integration::sync_account_skills(&store)?;
             run_profile_session(&config, accounts::SESSION_PROFILE_NAME, None, &[], false).await?;
         }
     }
