@@ -1,5 +1,10 @@
 use std::process::Command;
 
+#[cfg(windows)]
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::path::{Path, PathBuf};
+
 use anyhow::{bail, Context, Result};
 
 #[cfg(unix)]
@@ -8,6 +13,25 @@ use crate::config::{ClaudexConfig, ProfileConfig};
 use crate::oauth::{AuthType, OAuthProvider};
 #[cfg(unix)]
 use crate::terminal;
+
+#[cfg(windows)]
+fn resolve_windows_command_in(binary: &str, paths: Option<&OsStr>, cwd: &Path) -> Result<PathBuf> {
+    which::which_in(binary, paths, cwd)
+        .with_context(|| format!("Claude Code command `{binary}` was not found in PATH"))
+}
+
+#[cfg(windows)]
+fn create_claude_command(binary: &str) -> Result<Command> {
+    let cwd = std::env::current_dir().context("failed to determine the current directory")?;
+    let paths = std::env::var_os("PATH");
+    let resolved = resolve_windows_command_in(binary, paths.as_deref(), &cwd)?;
+    Ok(Command::new(resolved))
+}
+
+#[cfg(not(windows))]
+fn create_claude_command(binary: &str) -> Result<Command> {
+    Ok(Command::new(binary))
+}
 
 pub fn launch_claude(
     config: &ClaudexConfig,
@@ -31,7 +55,7 @@ pub fn launch_claude(
     let is_noninteractive = extra_args.iter().any(|arg| arg == "-p" || arg == "--print")
         || extra_args.first().is_some_and(|arg| !arg.starts_with('-'));
 
-    let mut cmd = Command::new(&config.claude_binary);
+    let mut cmd = create_claude_command(&config.claude_binary)?;
 
     // 不设 CLAUDE_CONFIG_DIR — 使用全局 ~/.claude，保留用户已有认证和设置。
     // Profile 差异化完全通过环境变量实现。
@@ -427,6 +451,23 @@ mod tests {
         let args = vec!["--resume".to_string(), "old-id".to_string()];
         let hint = build_resume_hint("p", "new-id", &args);
         assert_eq!(hint, "claudex run p --resume new-id");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_windows_cmd_shim_from_path_without_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-claude.cmd");
+        std::fs::write(&script, "@echo off\r\nexit /b 0\r\n").unwrap();
+
+        let resolved =
+            resolve_windows_command_in("fake-claude", Some(dir.path().as_os_str()), dir.path())
+                .unwrap();
+
+        assert_eq!(
+            std::fs::canonicalize(resolved).unwrap(),
+            std::fs::canonicalize(script).unwrap()
+        );
     }
 
     #[cfg(windows)]
