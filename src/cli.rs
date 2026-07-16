@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
@@ -70,11 +70,29 @@ pub enum Commands {
         action: Option<ModelsAction>,
     },
 
+    /// Toggle OpenAI subscription priority processing for this Claudex session
+    #[command(hide = true)]
+    Fast {
+        #[arg(value_enum)]
+        action: Option<FastAction>,
+    },
+
+    /// Show live OpenAI subscription usage
+    #[command(hide = true)]
+    Usage,
+
     /// Manage Claude Code configuration sets
     Sets {
         #[command(subcommand)]
         action: SetsAction,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum FastAction {
+    On,
+    Off,
+    Status,
 }
 
 #[derive(Subcommand)]

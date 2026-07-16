@@ -16,6 +16,8 @@ pub fn launch_claude(
     extra_args: &[String],
     hyperlinks_override: bool,
 ) -> Result<()> {
+    let fast_session = crate::openai::FastSession::create()?;
+    let integration_root = crate::integration::claude_integration_root()?;
     let proxy_base = format!(
         "http://{}:{}/proxy/{}",
         config.proxy_host, config.proxy_port, profile.name
@@ -51,15 +53,6 @@ pub fn launch_claude(
     // PowerShell on Windows instead of requiring the old WSL/Git Bash path.
     #[cfg(windows)]
     cmd.env("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1");
-
-    if !profile.custom_headers.is_empty() {
-        let headers: Vec<String> = profile
-            .custom_headers
-            .iter()
-            .map(|(k, v)| format!("{k}:{v}"))
-            .collect();
-        cmd.env("ANTHROPIC_CUSTOM_HEADERS", headers.join(","));
-    }
 
     // 模型 slot 映射 → Claude Code 的 /model 切换
     if let Some(ref h) = profile.models.haiku {
@@ -97,6 +90,14 @@ pub fn launch_claude(
         cmd.env(k, v);
     }
 
+    // Claude Code's own /fast is tied to Anthropic organization state and
+    // cannot react when OpenAI is connected through /models during an existing
+    // session. Claudex supplies a live-managed command and sends only this
+    // random session ID to its loopback gateway.
+    cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1")
+        .env(crate::openai::FAST_SESSION_ENV, fast_session.id());
+    configure_custom_headers(&mut cmd, profile, fast_session.id());
+
     // Apply after profile variables so telemetry/exporters cannot be
     // accidentally re-enabled by an old profile or inherited shell setting.
     crate::privacy::apply_private_environment(&mut cmd);
@@ -107,6 +108,9 @@ pub fn launch_claude(
     if !extra_args.iter().any(|a| a == "--chrome") {
         cmd.arg("--no-chrome");
     }
+
+    // Keep OpenAI-only commands out of ordinary Claude Code sessions.
+    cmd.arg("--add-dir").arg(integration_root);
 
     cmd.args(&private_args);
 
@@ -173,6 +177,20 @@ pub fn launch_claude(
     }
 
     Ok(())
+}
+
+fn configure_custom_headers(command: &mut Command, profile: &ProfileConfig, session_id: &str) {
+    let mut headers: Vec<String> = profile
+        .custom_headers
+        .iter()
+        .filter(|(name, _)| !name.eq_ignore_ascii_case(crate::openai::FAST_SESSION_HEADER))
+        .map(|(name, value)| format!("{name}:{value}"))
+        .collect();
+    headers.push(format!(
+        "{}:{session_id}",
+        crate::openai::FAST_SESSION_HEADER
+    ));
+    command.env("ANTHROPIC_CUSTOM_HEADERS", headers.join(","));
 }
 
 fn profile_uses_chatgpt(config: &ClaudexConfig, profile: &ProfileConfig) -> bool {
@@ -343,6 +361,28 @@ mod tests {
     }
 
     #[test]
+    fn reserved_fast_header_cannot_be_overridden_by_a_profile() {
+        let profile = ProfileConfig {
+            custom_headers: std::collections::HashMap::from([
+                ("X-Test".to_string(), "ok".to_string()),
+                (
+                    crate::openai::FAST_SESSION_HEADER.to_string(),
+                    "attacker-controlled".to_string(),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let mut command = Command::new("claude");
+
+        configure_custom_headers(&mut command, &profile, "safe-session");
+
+        let headers = command_env(&command, "ANTHROPIC_CUSTOM_HEADERS").unwrap();
+        assert!(headers.contains("X-Test:ok"));
+        assert!(headers.contains("x-claudex-fast-session:safe-session"));
+        assert!(!headers.contains("attacker-controlled"));
+    }
+
+    #[test]
     fn test_build_resume_hint_no_extra_args() {
         let hint = build_resume_hint("codex-sub", "abc-123", &[]);
         assert_eq!(hint, "claudex run codex-sub --resume abc-123");
@@ -402,7 +442,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo CAPABILITIES=%ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES%\r\n  echo DISCOVERY=%CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY%\r\n  echo CUSTOM=%ANTHROPIC_CUSTOM_MODEL_OPTION%\r\n  echo CUSTOM_CAPABILITIES=%ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo POWERSHELL=%CLAUDE_CODE_USE_POWERSHELL_TOOL%\r\n  echo ARGS=%*\r\n)\r\n",
+                "@echo off\r\n> \"{}\" (\r\n  echo BASE=%ANTHROPIC_BASE_URL%\r\n  echo TOKEN=%ANTHROPIC_AUTH_TOKEN%\r\n  echo MODEL=%ANTHROPIC_MODEL%\r\n  echo HAIKU=%ANTHROPIC_DEFAULT_HAIKU_MODEL%\r\n  echo CAPABILITIES=%ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES%\r\n  echo DISCOVERY=%CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY%\r\n  echo CUSTOM=%ANTHROPIC_CUSTOM_MODEL_OPTION%\r\n  echo CUSTOM_CAPABILITIES=%ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES%\r\n  echo FAST_DISABLED=%CLAUDE_CODE_DISABLE_FAST_MODE%\r\n  echo FAST_SESSION=%CLAUDEX_FAST_SESSION%\r\n  echo HEADERS=%ANTHROPIC_CUSTOM_HEADERS%\r\n  echo PRIVATE=%CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC%\r\n  echo TELEMETRY=%DISABLE_TELEMETRY%\r\n  echo UPDATES=%DISABLE_UPDATES%\r\n  echo OTEL=%OTEL_METRICS_EXPORTER%\r\n  echo POWERSHELL=%CLAUDE_CODE_USE_POWERSHELL_TOOL%\r\n  echo ARGS=%*\r\n)\r\n",
                 output.display()
             ),
         )
@@ -456,12 +496,16 @@ mod tests {
         assert!(child_output.contains("DISCOVERY=1"));
         assert!(child_output.contains("CUSTOM=test-model"));
         assert!(child_output.contains("CUSTOM_CAPABILITIES=effort,xhigh_effort,max_effort"));
+        assert!(child_output.contains("FAST_DISABLED=1"));
+        assert!(child_output.contains("FAST_SESSION="));
+        assert!(child_output.contains("HEADERS=x-claudex-fast-session:"));
         assert!(child_output.contains("PRIVATE=1"));
         assert!(child_output.contains("TELEMETRY=1"));
         assert!(child_output.contains("UPDATES=1"));
         assert!(child_output.contains("OTEL=none"));
         assert!(child_output.contains("POWERSHELL=1"));
-        assert!(child_output.contains("ARGS=--no-chrome --settings"));
+        assert!(child_output.contains("ARGS=--no-chrome --add-dir"));
+        assert!(child_output.contains("claude-integration --settings"));
         assert!(child_output.contains("skipWebFetchPreflight"));
         assert!(child_output.contains("--print hello"));
     }

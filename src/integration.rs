@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use crate::config::ClaudexConfig;
 
 const MANAGED_MARKER: &str = "<!-- claudex-managed-models-skill:v1 -->";
+const OPENAI_FAST_MARKER: &str = "<!-- claudex-managed-openai-fast-skill:v1 -->";
+const OPENAI_USAGE_MARKER: &str = "<!-- claudex-managed-openai-usage-skill:v1 -->";
 const MODELS_SKILL: &str = r#"---
 name: models
 description: Open the local Claudex provider and model manager.
@@ -36,6 +38,51 @@ Open the local Claudex provider and model manager now:
 Tell the user that the local account manager is open in their browser. Once a
 provider is connected, they can use `/model` to switch models without leaving
 this session.
+"#;
+
+const OPENAI_FAST_SKILL: &str = r#"---
+name: fast
+description: Toggle OpenAI subscription priority processing for this Claudex session.
+disable-model-invocation: true
+---
+<!-- claudex-managed-openai-fast-skill:v1 -->
+
+Toggle this Claudex session's OpenAI fast mode now:
+
+!`claudex fast`
+
+Repeat the command output verbatim and do nothing else. The local gateway uses
+OpenAI priority processing while fast mode is on, which is about 1.5x faster
+and consumes subscription credits at the provider's accelerated rate.
+"#;
+
+const OPENAI_USAGE_SKILL: &str = r#"---
+name: usage
+description: Show the connected OpenAI subscription's live remaining usage.
+disable-model-invocation: true
+---
+<!-- claudex-managed-openai-usage-skill:v1 -->
+
+Fetch the connected OpenAI subscription's usage now:
+
+!`claudex usage`
+
+Repeat the command output verbatim and do nothing else. The local command
+queries OpenAI at invocation time, so its values are authoritative.
+"#;
+
+// Claude Code ships its own `/usage` command. A hidden skill with the same
+// name shadows that built-in while no OpenAI subscription is connected, so
+// the command is genuinely absent instead of showing unrelated Claude usage.
+const HIDDEN_OPENAI_USAGE_SKILL: &str = r#"---
+name: usage
+description: Reserved for connected OpenAI subscription usage in Claudex.
+disable-model-invocation: true
+user-invocable: false
+---
+<!-- claudex-managed-openai-usage-skill:v1 -->
+
+OpenAI subscription usage is unavailable because no OpenAI account is connected.
 "#;
 
 /// Install the personal skill before Claude starts so it is discovered during
@@ -76,6 +123,74 @@ fn write_managed_skill(path: &PathBuf, content: &str) -> Result<()> {
     }
     crate::config::write_file_atomically(path, content.as_bytes())
         .with_context(|| format!("failed to install Claude Code skill at {}", path.display()))
+}
+
+/// Directory passed to Claude Code with `--add-dir`. Keeping OpenAI-specific
+/// commands here makes them visible only in Claudex sessions, while the
+/// always-present parent directory lets Claude Code detect account changes
+/// without a restart.
+pub fn claude_integration_root() -> Result<PathBuf> {
+    let root = ClaudexConfig::config_dir()?.join("claude-integration");
+    std::fs::create_dir_all(root.join(".claude").join("skills"))?;
+    Ok(root)
+}
+
+pub fn sync_openai_skills(connected: bool) -> Result<()> {
+    let root = claude_integration_root()?;
+    sync_openai_skills_at(&root, connected)
+}
+
+fn sync_openai_skills_at(root: &std::path::Path, connected: bool) -> Result<()> {
+    let skills = root.join(".claude").join("skills");
+    std::fs::create_dir_all(&skills)?;
+    sync_managed_skill(
+        &skills.join("fast").join("SKILL.md"),
+        OPENAI_FAST_SKILL,
+        OPENAI_FAST_MARKER,
+        connected,
+    )?;
+    sync_managed_skill(
+        &skills.join("usage").join("SKILL.md"),
+        if connected {
+            OPENAI_USAGE_SKILL
+        } else {
+            HIDDEN_OPENAI_USAGE_SKILL
+        },
+        OPENAI_USAGE_MARKER,
+        true,
+    )?;
+    Ok(())
+}
+
+fn sync_managed_skill(path: &PathBuf, content: &str, marker: &str, enabled: bool) -> Result<()> {
+    if enabled {
+        if path.exists() {
+            let existing = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            if !existing.contains(marker) {
+                anyhow::bail!(
+                    "refusing to replace non-Claudex skill at {}",
+                    path.display()
+                );
+            }
+        }
+        return write_managed_skill(path, content);
+    }
+
+    if !path.exists() {
+        return Ok(());
+    }
+    let existing = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    if !existing.contains(marker) {
+        return Ok(());
+    }
+    std::fs::remove_file(path)
+        .with_context(|| format!("failed to remove Claude Code skill at {}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 pub async fn open_model_manager(config: &mut ClaudexConfig) -> Result<()> {
@@ -183,5 +298,33 @@ mod tests {
         assert_eq!(std::fs::read_to_string(preferred).unwrap(), "user content");
         let fallback = home.path().join(".claude/skills/claudex-models/SKILL.md");
         assert_eq!(std::fs::read_to_string(fallback).unwrap(), FALLBACK_SKILL);
+    }
+
+    #[test]
+    fn openai_skills_appear_and_disappear_with_the_account() {
+        let root = tempfile::tempdir().unwrap();
+        let fast = root.path().join(".claude/skills/fast/SKILL.md");
+        let usage = root.path().join(".claude/skills/usage/SKILL.md");
+
+        sync_openai_skills_at(root.path(), false).unwrap();
+        assert!(!fast.exists());
+        assert!(std::fs::read_to_string(&usage)
+            .unwrap()
+            .contains("user-invocable: false"));
+
+        sync_openai_skills_at(root.path(), true).unwrap();
+        assert!(std::fs::read_to_string(&fast)
+            .unwrap()
+            .contains("!`claudex fast`"));
+        assert!(std::fs::read_to_string(&usage)
+            .unwrap()
+            .contains("!`claudex usage`"));
+
+        sync_openai_skills_at(root.path(), false).unwrap();
+        assert!(!fast.exists());
+        assert!(std::fs::read_to_string(&usage)
+            .unwrap()
+            .contains("user-invocable: false"));
+        assert!(root.path().join(".claude/skills").exists());
     }
 }

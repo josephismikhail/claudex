@@ -6,6 +6,7 @@ mod config;
 mod context;
 mod integration;
 mod oauth;
+mod openai;
 mod privacy;
 mod process;
 mod proxy;
@@ -210,9 +211,18 @@ async fn main() -> Result<()> {
             ModelsAction::Open => integration::open_model_manager(&mut config).await?,
         },
 
+        Some(Commands::Fast { action }) => {
+            openai::run_fast_command(action)?;
+        }
+
+        Some(Commands::Usage) => {
+            openai::print_subscription_usage(&mut config).await?;
+        }
+
         None => {
             integration::ensure_models_skill()?;
-            accounts::apply_to_config(&mut config)?;
+            let store = accounts::apply_to_config(&mut config)?;
+            integration::sync_openai_skills(store.has_provider(accounts::AccountProvider::Openai))?;
             run_profile_session(&config, accounts::SESSION_PROFILE_NAME, None, &[], false).await?;
         }
     }

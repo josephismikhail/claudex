@@ -208,6 +208,13 @@ pub fn anthropic_to_responses(
         }
     }
 
+    // Claudex's session-scoped /fast command uses the same wire intent as
+    // Claude Code. OpenAI's Codex backend activates its accelerated queue with
+    // the Responses API priority service tier.
+    if anthropic.get("speed").and_then(Value::as_str) == Some("fast") {
+        body["service_tier"] = json!("priority");
+    }
+
     // Tools
     if let Some(tools) = anthropic.get("tools").and_then(|t| t.as_array()) {
         let resp_tools: Vec<Value> = tools
@@ -570,5 +577,26 @@ mod tests {
         });
         let (body, _) = anthropic_to_responses(&anthropic, "gpt-5.6").unwrap();
         assert_eq!(body["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_maps_fast_mode_to_openai_priority_service_tier() {
+        let anthropic = json!({
+            "model": "gpt-5.6",
+            "speed": "fast",
+            "messages": [{"role": "user", "content": "hello"}],
+        });
+        let (body, _) = anthropic_to_responses(&anthropic, "gpt-5.6").unwrap();
+        assert_eq!(body["service_tier"], "priority");
+    }
+
+    #[test]
+    fn test_standard_mode_does_not_request_a_service_tier() {
+        let anthropic = json!({
+            "model": "gpt-5.6",
+            "messages": [{"role": "user", "content": "hello"}],
+        });
+        let (body, _) = anthropic_to_responses(&anthropic, "gpt-5.6").unwrap();
+        assert!(body.get("service_tier").is_none());
     }
 }
