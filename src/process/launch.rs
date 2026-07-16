@@ -115,8 +115,8 @@ pub fn launch_claude(
 
     configure_openai_picker_entry(&mut cmd, config, profile);
 
-    // Claude Code can execute the managed `/models` skill with native
-    // PowerShell on Windows instead of requiring the old WSL/Git Bash path.
+    // Claude Code can execute Claudex-managed skills with native PowerShell on
+    // Windows instead of requiring the old WSL/Git Bash path.
     #[cfg(windows)]
     cmd.env("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1");
 

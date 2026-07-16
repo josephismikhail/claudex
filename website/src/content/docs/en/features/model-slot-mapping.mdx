@@ -13,7 +13,7 @@ to its connected provider.
 
 ## Live updates
 
-When `/models` connects or removes an account, the running proxy rebuilds its
+When the local account manager connects or removes an account, the running proxy rebuilds its
 catalog in memory. A session that started with zero providers does not need to
 restart: requests still addressed to the local onboarding model are rewritten
 to the newly selected default, and `/model <model-id>` switches to any other

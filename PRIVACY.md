@@ -6,7 +6,7 @@ output anywhere for telemetry. It forwards model content only to the provider
 and model the user selects. It has no telemetry or crash-reporting SDK and
 performs no automatic update checks.
 
-The `/models` account manager is a loopback-only page bundled into the binary.
+The `claudex models open` account manager is a loopback-only page bundled into the binary.
 It loads no third-party scripts, fonts, images, or styles. Browser mutations
 require the page's exact origin. Account metadata is written atomically to
 `~/.config/claudex/accounts.json`; tokens and API keys are stored only in the

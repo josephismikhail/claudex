@@ -3,15 +3,15 @@ title: Provider Compatibility
 description: Account-first providers and advanced endpoint compatibility
 ---
 
-## Managed in-session accounts
+## Managed accounts
 
 | Provider | Protocol | Authentication | Model catalog |
 |---|---|---|---|
 | OpenAI | Responses API | ChatGPT browser OAuth | GPT-5.6 |
 | Anthropic | Messages API | Console API key | Discovered from `/v1/models` for the key |
 
-Both providers can be connected at the same time. Use `/models` to manage the
-accounts and `/model` to switch between their models in one Claude Code session.
+Both providers can be connected at the same time. Use `claudex models open` to
+manage accounts and Claude Code's built-in `/model` to switch between them.
 
 Claude Free, Pro, and Max OAuth credentials are not supported because
 Anthropic's policy prohibits third-party gateways from offering or routing

@@ -5,40 +5,9 @@ use anyhow::{Context, Result};
 
 use crate::config::ClaudexConfig;
 
-const MANAGED_MARKER: &str = "<!-- claudex-managed-models-skill:v1 -->";
+const LEGACY_MODELS_MARKER: &str = "<!-- claudex-managed-models-skill:v1 -->";
 const OPENAI_FAST_MARKER: &str = "<!-- claudex-managed-openai-fast-skill:v1 -->";
 const OPENAI_USAGE_MARKER: &str = "<!-- claudex-managed-openai-usage-skill:v1 -->";
-const MODELS_SKILL: &str = r#"---
-name: models
-description: Open the local Claudex provider and model manager.
-disable-model-invocation: true
----
-<!-- claudex-managed-models-skill:v1 -->
-
-Open the local Claudex provider and model manager now:
-
-!`claudex models open`
-
-Tell the user that the local account manager is open in their browser. Once a
-provider is connected, they can use `/model` to switch models without leaving
-this session.
-"#;
-
-const FALLBACK_SKILL: &str = r#"---
-name: claudex-models
-description: Open the local Claudex provider and model manager.
-disable-model-invocation: true
----
-<!-- claudex-managed-models-skill:v1 -->
-
-Open the local Claudex provider and model manager now:
-
-!`claudex models open`
-
-Tell the user that the local account manager is open in their browser. Once a
-provider is connected, they can use `/model` to switch models without leaving
-this session.
-"#;
 
 const ROUTE_AWARE_FAST_SKILL: &str = r#"---
 name: fast
@@ -85,33 +54,24 @@ user-invocable: false
 OpenAI subscription usage is unavailable because no OpenAI account is connected.
 "#;
 
-/// Install the personal skill before Claude starts so it is discovered during
-/// the current session. Existing user-authored `/models` skills are preserved.
-pub fn ensure_models_skill() -> Result<&'static str> {
+/// Remove the retired Claudex `/models` skill while preserving any
+/// user-authored skill that happens to use the same name.
+pub fn remove_legacy_models_skills() -> Result<()> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
-    ensure_models_skill_at(&home)
+    remove_legacy_models_skills_at(&home)
 }
 
-fn ensure_models_skill_at(home: &std::path::Path) -> Result<&'static str> {
+fn remove_legacy_models_skills_at(home: &std::path::Path) -> Result<()> {
     let skills = home.join(".claude").join("skills");
-    let preferred = skills.join("models").join("SKILL.md");
-
-    if preferred.exists() {
-        let existing = std::fs::read_to_string(&preferred)
-            .with_context(|| format!("failed to read {}", preferred.display()))?;
-        if !existing.contains(MANAGED_MARKER) {
-            let fallback = skills.join("claudex-models").join("SKILL.md");
-            write_managed_skill(&fallback, FALLBACK_SKILL)?;
-            tracing::warn!(
-                path = %preferred.display(),
-                "kept user-authored /models skill; installed Claudex as /claudex-models"
-            );
-            return Ok("/claudex-models");
-        }
+    for name in ["models", "claudex-models"] {
+        sync_managed_skill(
+            &skills.join(name).join("SKILL.md"),
+            "",
+            LEGACY_MODELS_MARKER,
+            false,
+        )?;
     }
-
-    write_managed_skill(&preferred, MODELS_SKILL)?;
-    Ok("/models")
+    Ok(())
 }
 
 fn write_managed_skill(path: &PathBuf, content: &str) -> Result<()> {
@@ -268,13 +228,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn managed_skill_invokes_local_cli() {
-        assert!(MODELS_SKILL.contains("disable-model-invocation: true"));
-        assert!(MODELS_SKILL.contains("!`claudex models open`"));
-        assert!(MODELS_SKILL.contains(MANAGED_MARKER));
-    }
-
-    #[test]
     fn wildcard_bind_uses_loopback_browser_url() {
         assert_eq!(browser_host("0.0.0.0"), "127.0.0.1");
         assert_eq!(browser_host("::1"), "[::1]");
@@ -283,27 +236,23 @@ mod tests {
     }
 
     #[test]
-    fn skill_is_installed_before_launch_and_upgrades_atomically() {
+    fn retired_models_skills_are_removed_without_touching_user_skills() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(ensure_models_skill_at(home.path()).unwrap(), "/models");
-        let path = home.path().join(".claude/skills/models/SKILL.md");
-        assert_eq!(std::fs::read_to_string(path).unwrap(), MODELS_SKILL);
-    }
+        let managed = home.path().join(".claude/skills/models/SKILL.md");
+        let managed_fallback = home.path().join(".claude/skills/claudex-models/SKILL.md");
+        let user_owned = home.path().join(".claude/skills/custom/SKILL.md");
+        for path in [&managed, &managed_fallback, &user_owned] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        std::fs::write(&managed, LEGACY_MODELS_MARKER).unwrap();
+        std::fs::write(&managed_fallback, LEGACY_MODELS_MARKER).unwrap();
+        std::fs::write(&user_owned, "user content").unwrap();
 
-    #[test]
-    fn user_owned_models_skill_is_preserved_with_fallback() {
-        let home = tempfile::tempdir().unwrap();
-        let preferred = home.path().join(".claude/skills/models/SKILL.md");
-        std::fs::create_dir_all(preferred.parent().unwrap()).unwrap();
-        std::fs::write(&preferred, "user content").unwrap();
+        remove_legacy_models_skills_at(home.path()).unwrap();
 
-        assert_eq!(
-            ensure_models_skill_at(home.path()).unwrap(),
-            "/claudex-models"
-        );
-        assert_eq!(std::fs::read_to_string(preferred).unwrap(), "user content");
-        let fallback = home.path().join(".claude/skills/claudex-models/SKILL.md");
-        assert_eq!(std::fs::read_to_string(fallback).unwrap(), FALLBACK_SKILL);
+        assert!(!managed.exists());
+        assert!(!managed_fallback.exists());
+        assert_eq!(std::fs::read_to_string(user_owned).unwrap(), "user content");
     }
 
     #[test]

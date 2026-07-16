@@ -1,13 +1,13 @@
 # Claudex
 
-Claudex is a local multi-provider model gateway for Claude Code. Start one
-Claude Code session, connect providers from `/models`, and switch between their
-models with `/model` without restarting or choosing a profile.
+Claudex is a local multi-provider model gateway for Claude Code. Connect
+providers with `claudex models open`, start one Claude Code session, and switch
+between their models with the built-in `/model` command.
 
 This is a Windows-first stability fork of
 [StringKe/claudex](https://github.com/StringKe/claudex). It retains the upstream
 MIT license and adds native PowerShell support, crash-safe local state, bounded
-terminal buffering, strict privacy defaults, and in-session provider setup.
+terminal buffering, strict privacy defaults, and local provider setup.
 
 ## Install
 
@@ -36,14 +36,12 @@ picker, or required model selection. A new installation starts with an empty
 provider catalog; the temporary onboarding response is generated inside the
 loopback proxy and makes no provider request.
 
-Inside Claude Code:
+From PowerShell:
 
-1. Run `/models`.
-2. Pick OpenAI or Anthropic in the local browser page.
-3. Finish authentication.
-4. Copy the displayed `/model <model-id>` command to switch immediately in
-   the same session. On later launches, bare `/model` lists the persisted
-   models in its picker.
+1. Run `claudex models open`.
+2. Pick OpenAI or Anthropic in the local browser page and finish authentication.
+3. Run `claudex`.
+4. Use Claude Code's built-in `/model` picker to select a persisted model.
 
 Provider-aware commands appear in that same session as accounts are connected:
 
@@ -91,14 +89,14 @@ Anthropic through a Console API key only; see Anthropic's
   IDs, never tokens or API keys.
 - Tokens and API keys are stored in Windows Credential Manager, macOS Keychain,
   or the platform keyring on Linux.
-- The `/models` command is installed as a managed personal Claude Code skill at
-  `~/.claude/skills/models/SKILL.md`. An existing user-authored `/models` skill
-  is preserved; Claudex installs `/claudex-models` instead.
+- The account manager is opened explicitly from PowerShell with
+  `claudex models open`; Claudex does not install a duplicate `/models` slash
+  command into Claude Code.
 - The provider-aware `/fast` skill and OpenAI-only `/usage` skill are stored under
   `~/.config/claudex/claude-integration/` and loaded with `--add-dir`, so they
   do not replace commands in ordinary Claude Code sessions. Claude Code watches
-  that directory, allowing the commands to appear or disappear after `/models`
-  authentication without restarting.
+  that directory, allowing the commands to appear or disappear after account
+  changes without restarting.
 - `/fast` state is a small per-session JSON file under
   `~/.config/claudex/sessions/`. It contains only a version and an on/off value,
   is selected through a random loopback-only ID, and is removed when the Claude

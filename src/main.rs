@@ -221,7 +221,7 @@ async fn main() -> Result<()> {
         }
 
         None => {
-            integration::ensure_models_skill()?;
+            integration::remove_legacy_models_skills()?;
             let store = accounts::apply_to_config(&mut config)?;
             integration::sync_account_skills(&store)?;
             run_profile_session(&config, accounts::SESSION_PROFILE_NAME, None, &[], false).await?;

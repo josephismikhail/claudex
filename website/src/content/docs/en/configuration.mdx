@@ -5,8 +5,9 @@ description: Account storage, defaults, and advanced compatibility
 
 ## Normal setup needs no config editing
 
-Run `claudex`, then `/models`. Provider accounts and their models are managed by
-the localhost page and persisted independently of project configuration.
+Run `claudex models open`. Provider accounts and their models are managed by
+the localhost page and persisted independently of project configuration. The
+only in-session model command is Claude Code's built-in `/model`.
 
 Account metadata lives at:
 
@@ -19,7 +20,7 @@ operating system credential store.
 
 ## Default model
 
-Use **Make default** beside a connected model in `/models`. The choice applies
+Use **Make default** beside a connected model in the account manager. The choice applies
 to future sessions. In a running Claude Code session, use `/model` to switch
 without changing the persistent default.
 
@@ -57,4 +58,4 @@ See the repository's
 for router, fallback, context-engine, and custom-header fields.
 
 Claude subscription OAuth profiles are unsupported and rejected. Anthropic
-must be connected with a Console API key from `/models`.
+must be connected with a Console API key from `claudex models open`.

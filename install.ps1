@@ -119,7 +119,7 @@ try {
         Write-Warning "Claude Code was not found in PATH. Install it before running 'claudex'."
     } else {
         Write-Host ""
-        Write-Host "Next: run 'claudex', then use /models inside the session."
+        Write-Host "Next: run 'claudex models open' to connect providers, then run 'claudex'."
     }
 } finally {
     if ($null -ne $stagedDestination) {

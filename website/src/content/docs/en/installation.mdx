@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install Claudex, launch one session, and add providers from /models
+description: Install Claudex, connect providers locally, and retain Claude Code's interface
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
@@ -44,11 +44,10 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 claudex
 ```
 
-There is no initial configuration step. Claude Code opens with an empty
-provider catalog. Inside that session:
+Connect providers from PowerShell, then start Claude Code:
 
-1. Run `/models`.
+1. Run `claudex models open`.
 2. Connect OpenAI or Anthropic API in the local browser page.
-3. Return to Claude Code and run `/model`.
+3. Run `claudex` and use the built-in `/model` command.
 
 The account and model catalog persist the next time you run `claudex`.

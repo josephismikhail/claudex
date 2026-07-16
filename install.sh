@@ -114,7 +114,7 @@ main() {
     echo
     "$INSTALL_DIR/claudex" --version 2>/dev/null || true
     echo
-    echo "Next: run 'claudex', then use /models inside the session."
+    echo "Next: run 'claudex models open' to connect providers, then run 'claudex'."
 }
 
 main "$@"

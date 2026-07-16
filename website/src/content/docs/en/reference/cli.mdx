@@ -13,7 +13,7 @@ claudex
 
 This behaves the same with zero, one, or multiple connected providers. It never
 opens a profile picker. With zero providers, responses come from the local
-onboarding model until `/models` is used.
+onboarding model until an account is connected with `claudex models open`.
 
 ## `claudex models`
 
@@ -24,8 +24,8 @@ claudex models
 claudex models open
 ```
 
-The managed Claude Code skill invokes `claudex models open`, which is why
-typing `/models` inside a session opens the same page.
+This is a terminal command, not a Claude Code slash command. Claudex leaves
+`/model` as the only in-session model command.
 
 ## `claudex proxy`
 
@@ -56,7 +56,7 @@ claudex config edit --global
 
 The old `run`, `profile`, `dashboard`, and `auth` commands remain callable but
 are hidden from normal help. They exist for existing custom-provider configs;
-new installations should use bare `claudex` and `/models`.
+new installations should use `claudex models open` followed by bare `claudex`.
 
 Claude Free, Pro, and Max OAuth routing is rejected. Use an Anthropic Console
-API key from `/models`.
+API key from `claudex models open`.

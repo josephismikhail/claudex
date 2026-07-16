@@ -461,7 +461,7 @@ hyperlinks = "auto"
 
 [model_aliases]
 
-# Provider accounts are normally added in-session with /models. The advanced
+# Provider accounts can be managed with `claudex models open`. The advanced
 # legacy profile engine remains available for custom/local endpoints. Example:
 #
 # [[profiles]]

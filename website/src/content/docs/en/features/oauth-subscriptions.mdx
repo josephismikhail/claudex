@@ -1,13 +1,13 @@
 ---
 title: Provider Accounts
-description: Persistent OpenAI and Anthropic accounts managed from /models
+description: Persistent OpenAI and Anthropic accounts managed locally
 ---
 
 ## Open the account manager
 
-Run `/models` inside Claude Code. Claudex installs that command as a personal
-skill before the session starts. If the user already owns a `/models` skill,
-Claudex preserves it and installs `/claudex-models` instead.
+Run `claudex models open` in PowerShell. Claudex does not install a second
+model-related slash command into Claude Code; use the built-in `/model` picker
+after connecting an account.
 
 The page is served by the loopback proxy and bundles all HTML, CSS, and
 JavaScript in the Claudex binary. It makes no background provider request.
