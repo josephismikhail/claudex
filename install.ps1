@@ -18,9 +18,18 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\Claudex\bin"
 }
 
-$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$architecture = [Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITEW6432")
+if ([string]::IsNullOrWhiteSpace($architecture)) {
+    $architecture = [Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE")
+}
+if ([string]::IsNullOrWhiteSpace($architecture)) {
+    throw "Windows did not report its processor architecture."
+}
+
+$architecture = $architecture.Trim().ToUpperInvariant()
 $target = switch ($architecture) {
-    "X64" { "x86_64-pc-windows-msvc" }
+    "AMD64" { "x86_64-pc-windows-msvc" }
+    "X86_64" { "x86_64-pc-windows-msvc" }
     default { throw "Unsupported Windows architecture: $architecture (currently supported: x64)" }
 }
 
