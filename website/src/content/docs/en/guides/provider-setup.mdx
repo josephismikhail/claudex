@@ -1,6 +1,6 @@
 ---
 title: Provider Setup
-description: Connect OpenAI and Anthropic without leaving Claude Code
+description: Connect OpenAI and Anthropic from Joey's Claudex
 ---
 
 ## Start the session first
@@ -9,27 +9,26 @@ description: Connect OpenAI and Anthropic without leaving Claude Code
 claudex
 ```
 
-A new installation deliberately has no preset provider models. Type `/models`
-inside Claude Code to open the account manager.
+A new installation deliberately has no preset provider models. Type `/model`
+inside Joey's Claudex and choose a provider.
 
 ## OpenAI
 
-1. Click **Connect OpenAI**.
+1. Choose **OpenAI** in `/model`.
 2. Complete ChatGPT sign-in in the browser window.
-3. Return to the account page and wait for **Connected**.
-4. Use the copy button and run `/model gpt-5.6` immediately. On later
-   launches, select it from the bare `/model` picker.
+3. Return to Joey's Claudex; the picker updates automatically.
+4. Select any model returned for the signed-in account.
 
 The OAuth callback stays on localhost, uses PKCE and state validation, and
 stores the token in the operating system credential store.
 
 ## Anthropic API
 
-1. Click **Connect Anthropic**.
+1. Choose **Anthropic** in `/model`.
 2. Create an API key in the Anthropic Console tab that opens.
 3. Paste the key into the Claudex localhost dialog.
-4. Copy `/model <model-id>` for an immediate switch. Persisted models appear
-   in the bare `/model` picker on later launches.
+4. Return to Joey's Claudex and select a discovered model. Persisted models
+   appear in `/model` on later launches.
 
 Claudex contacts Anthropic's Models API only as part of this explicit connect
 operation. It does not probe the provider at startup.
@@ -40,7 +39,8 @@ subscription login inside official Claude products.
 
 ## Disconnect
 
-Click **Remove** on a connected account. Claudex removes the metadata and asks
+Use the compatibility browser manager (`claudex models`) and click **Remove**
+on a connected account. Claudex removes the metadata and asks
 the operating system credential store to delete the corresponding secret. The
 running model catalog updates immediately.
 

@@ -147,7 +147,7 @@ impl TokenManager {
             }
             OAuthProvider::Github => self.load_github_token(profile).await,
             OAuthProvider::Claude => anyhow::bail!(
-                "Claude Free/Pro/Max credentials cannot be refreshed or routed by Claudex; use an Anthropic Console API key from /models"
+                "Claude Free/Pro/Max credentials cannot be refreshed or routed by Claudex; use an Anthropic Console API key from /model"
             ),
             OAuthProvider::Google => self.load_simple_token(provider, profile).await,
             OAuthProvider::Kimi => self.load_simple_token(provider, profile).await,

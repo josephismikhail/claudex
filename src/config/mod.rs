@@ -202,7 +202,7 @@ impl StripParams {
 }
 
 /// Claude Code 模型 slot 映射
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileModels {
     pub haiku: Option<String>,
     pub sonnet: Option<String>,
@@ -461,7 +461,7 @@ hyperlinks = "auto"
 
 [model_aliases]
 
-# Provider accounts are normally added in-session with /models. The advanced
+# Provider accounts are normally added in-session with /model. The advanced
 # legacy profile engine remains available for custom/local endpoints. Example:
 #
 # [[profiles]]

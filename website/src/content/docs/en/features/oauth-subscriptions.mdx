@@ -1,13 +1,13 @@
 ---
 title: Provider Accounts
-description: Persistent OpenAI and Anthropic accounts managed from /models
+description: Persistent OpenAI and Anthropic accounts managed from /model
 ---
 
 ## Open the account manager
 
-Run `/models` inside Claude Code. Claudex installs that command as a personal
-skill before the session starts. If the user already owns a `/models` skill,
-Claudex preserves it and installs `/claudex-models` instead.
+Run `/model` in Joey's Claudex. With no accounts it opens the provider list.
+With connected accounts it opens the combined model picker; **Authenticate
+another LLM provider** returns to the provider list.
 
 The page is served by the loopback proxy and bundles all HTML, CSS, and
 JavaScript in the Claudex binary. It makes no background provider request.
@@ -17,7 +17,8 @@ JavaScript in the Claudex binary. It makes no background provider request.
 Click **Connect OpenAI** to open ChatGPT browser authorization. Claudex uses
 PKCE, validates OAuth state, binds the callback listener before opening the
 authorization URL, and stores the resulting token in the OS credential store.
-Required refreshes happen only when the selected OpenAI model is used.
+Claudex then requests the picker-visible model catalog for that signed-in
+account. Required token refreshes happen only when OpenAI is used.
 
 ## Anthropic API
 
@@ -36,4 +37,4 @@ user to an Anthropic Console API key. See Anthropic's
 `~/.config/claudex/accounts.json` contains only provider labels, model IDs, a
 credential-store reference, and the default model. It never contains a token or
 API key. Adding or removing an account rebuilds the running model catalog in
-memory, so `/model` can switch immediately without a new Claude Code session.
+memory, so `/model` can switch immediately without a new agent session.

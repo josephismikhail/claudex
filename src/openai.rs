@@ -9,6 +9,11 @@ use crate::config::ClaudexConfig;
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 
 pub async fn print_subscription_usage(config: &mut ClaudexConfig) -> Result<()> {
+    println!("{}", subscription_usage(config).await?);
+    Ok(())
+}
+
+pub async fn subscription_usage(config: &mut ClaudexConfig) -> Result<String> {
     let store = crate::accounts::apply_to_config(config)?;
     if !store.has_provider(AccountProvider::Openai) {
         anyhow::bail!("/usage is available only when an OpenAI subscription is connected");
@@ -42,11 +47,10 @@ pub async fn print_subscription_usage(config: &mut ClaudexConfig) -> Result<()> 
     }
     let usage: UsageSnapshot = serde_json::from_slice(&bytes)
         .context("OpenAI returned an invalid subscription usage response")?;
-    println!("{}", format_usage(&usage));
-    Ok(())
+    Ok(format_usage(&usage))
 }
 
-fn subscription_account_id(token: &crate::oauth::OAuthToken) -> Result<String> {
+pub(crate) fn subscription_account_id(token: &crate::oauth::OAuthToken) -> Result<String> {
     token
         .extra
         .as_ref()

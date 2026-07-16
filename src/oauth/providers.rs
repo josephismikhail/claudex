@@ -157,7 +157,7 @@ pub async fn login(
 
     if provider == OAuthProvider::Claude {
         anyhow::bail!(
-            "Claudex does not route Claude Free/Pro/Max credentials. Use /models and connect Anthropic with a Console API key instead"
+            "Claudex does not route Claude Free/Pro/Max credentials. Use /model and connect Anthropic with a Console API key instead"
         );
     }
 
@@ -646,7 +646,7 @@ pub async fn refresh(config: &ClaudexConfig, profile_name: &str) -> Result<()> {
 
     match provider {
         OAuthProvider::Claude => anyhow::bail!(
-            "Claudex does not refresh or route Claude Free/Pro/Max credentials. Connect an Anthropic Console API key with /models"
+            "Claudex does not refresh or route Claude Free/Pro/Max credentials. Connect an Anthropic Console API key with /model"
         ),
         OAuthProvider::Google | OAuthProvider::Kimi | OAuthProvider::Gitlab => {
             let cred = super::source::load_credential_chain(provider)?;

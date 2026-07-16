@@ -236,6 +236,23 @@ pub async fn open_model_manager(config: &mut ClaudexConfig) -> Result<()> {
     Ok(())
 }
 
+/// Open the account manager focused on a provider selected in Claudex's
+/// terminal `/model` picker. The setup page consumes the query once and starts
+/// the appropriate browser-based flow.
+pub fn open_provider_manager(config: &ClaudexConfig, provider: &str) -> Result<()> {
+    let provider = match provider.to_ascii_lowercase().as_str() {
+        "openai" => "openai",
+        "anthropic" => "anthropic",
+        _ => anyhow::bail!("unsupported provider '{provider}'"),
+    };
+    let setup_url = format!(
+        "http://{}:{}/setup?provider={provider}",
+        browser_host(&config.proxy_host),
+        config.proxy_port
+    );
+    open::that(&setup_url).context("failed to open provider authentication in a browser")
+}
+
 fn browser_host(configured: &str) -> String {
     if configured.eq_ignore_ascii_case("localhost") {
         return "localhost".to_string();

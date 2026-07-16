@@ -1,8 +1,9 @@
 # Claudex
 
-Claudex is a local multi-provider model gateway for Claude Code. Start one
-Claude Code session, connect providers from `/models`, and switch between their
-models with `/model` without restarting or choosing a profile.
+Claudex is a local multi-provider coding-agent terminal. It owns the interface
+you see while retaining Claude Code's installed tool, skill, MCP, and subagent
+harness underneath. Connect OpenAI and Anthropic in one session, then switch
+between every model exposed to those accounts with `/model`.
 
 This is a Windows-first stability fork of
 [StringKe/claudex](https://github.com/StringKe/claudex). It retains the upstream
@@ -31,23 +32,29 @@ Claude Code must also be installed and available as `claude` in `PATH`.
 claudex
 ```
 
-That command immediately opens Claude Code. There is no setup wizard, profile
-picker, or required model selection. A new installation starts with an empty
-provider catalog; the temporary onboarding response is generated inside the
-loopback proxy and makes no provider request.
+That command opens **Joey's Claudex** and displays the Claudex version. It does
+not display Claude Code's logo, version, model aliases, or billing label. A new
+installation starts with no preset models and the status `/model to
+authenticate`.
 
-Inside Claude Code:
+1. Type `/model`.
+2. Choose OpenAI or Anthropic.
+3. Complete authentication in the browser window that opens.
+4. Choose one of the models returned for that account.
 
-1. Run `/models`.
-2. Pick OpenAI or Anthropic in the local browser page.
-3. Finish authentication.
-4. Copy the displayed `/model <model-id>` command to switch immediately in
-   the same session. On later launches, bare `/model` lists the persisted
-   models in its picker.
+After the first account is connected, `/model` stacks every connected
+provider's models in one picker. **Authenticate another LLM provider** at the
+bottom returns to the provider list. The chosen default and connected accounts
+persist across exits; bare `claudex` never asks a one-account user to select an
+account or profile.
 
-Provider-aware commands appear in that same session as accounts are connected:
+Other in-session commands are provider-aware:
 
-- `/fast` appears when OpenAI is connected or the Anthropic account exposes
+- `/effort` selects `low`, `medium`, `high`, `ultracode`, or `max`.
+  `ultracode` registers proactive researcher, worker, and reviewer subagents
+  that inherit the selected provider model, adds parallel-delegation guidance,
+  and maps API reasoning effort to `xhigh` where supported.
+- `/fast` is available when OpenAI is connected or the Anthropic account exposes
   Claude Opus 4.8. It is one session toggle, but the gateway chooses the fast
   implementation for each selected model: OpenAI routes use
   `service_tier: "priority"` (about 1.5x), while Anthropic Opus 4.8 routes use
@@ -56,8 +63,8 @@ Provider-aware commands appear in that same session as accounts are connected:
 - `/usage` fetches a live OpenAI subscription snapshot and shows the percentage
   remaining in each returned usage window and when it resets.
 
-`/usage` disappears when the OpenAI account is removed. `/fast` remains if an
-eligible Anthropic route is still connected; otherwise it disappears too.
+`/usage` becomes unavailable when the OpenAI account is removed. `/fast`
+remains available if an eligible Anthropic route is still connected.
 Anthropic fast mode requires provider access and premium billing. See the
 [OpenAI fast-mode documentation](https://learn.chatgpt.com/docs/agent-configuration/speed.md)
 and [Anthropic fast-mode documentation](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
@@ -69,7 +76,7 @@ the unified session, whether one provider or several are connected.
 
 | Provider | Setup | Models |
 |---|---|---|
-| OpenAI | Browser OAuth using ChatGPT sign-in | GPT-5.6 |
+| OpenAI | Browser OAuth using ChatGPT sign-in | Picker-visible models returned for that ChatGPT account |
 | Anthropic API | Opens Anthropic Console; paste an API key into the localhost page | Discovered from Anthropic's Models API for that key |
 
 OpenAI credentials are stored in the operating system credential store and
@@ -86,27 +93,22 @@ Anthropic through a Console API key only; see Anthropic's
 
 - The account manager is served from the Claudex loopback proxy. It contains no
   remote scripts, fonts, images, or analytics.
-- Account metadata is saved atomically in
-  `~/.config/claudex/accounts.json`. That file contains provider names and model
+- Account metadata is saved atomically in the platform Claudex configuration
+  directory as `accounts.json`. That file contains provider names and model
   IDs, never tokens or API keys.
 - Tokens and API keys are stored in Windows Credential Manager, macOS Keychain,
   or the platform keyring on Linux.
-- The `/models` command is installed as a managed personal Claude Code skill at
-  `~/.claude/skills/models/SKILL.md`. An existing user-authored `/models` skill
-  is preserved; Claudex installs `/claudex-models` instead.
-- The provider-aware `/fast` skill and OpenAI-only `/usage` skill are stored under
-  `~/.config/claudex/claude-integration/` and loaded with `--add-dir`, so they
-  do not replace commands in ordinary Claude Code sessions. Claude Code watches
-  that directory, allowing the commands to appear or disappear after `/models`
-  authentication without restarting.
+- `/model`, `/effort`, `/fast`, and `/usage` are handled by the local Claudex
+  terminal. Compatibility skills loaded into the underlying harness do not
+  replace commands in ordinary Claude Code sessions.
 - `/fast` state is a small per-session JSON file under
   `~/.config/claudex/sessions/`. It contains only a version and an on/off value,
   is selected through a random loopback-only ID, and is removed when the Claude
   process exits.
 - The proxy and browser manager bind to loopback by default. Mutating browser
   requests require the exact same origin.
-- Provider endpoints are not probed at startup. Anthropic's model catalog is
-  requested only when the user explicitly connects an Anthropic API key.
+- Provider endpoints are not probed at startup. A provider's model catalog is
+  requested only when the user explicitly connects that provider.
 
 Model prompts necessarily leave the machine when a remote model is selected.
 OAuth also contacts the chosen provider. Claudex itself has no analytics,
@@ -126,21 +128,25 @@ PowerShell installer:
 
 ## How model switching works
 
-Claude Code talks only to the loopback Claudex gateway:
+The local terminal talks to the installed agent harness, and model traffic goes
+through the loopback Claudex gateway:
 
 ```text
-Claude Code
+Joey's Claudex terminal
+    │  streaming agent protocol
+    ▼
+installed Claude agent harness
     │  Anthropic Messages API
     ▼
 127.0.0.1:13456
-    ├── GPT model ───────► OpenAI Responses API
-    └── Claude model ────► Anthropic Messages API
+    ├── selected GPT model ───────► OpenAI Responses API
+    └── selected Claude model ────► Anthropic Messages API
 ```
 
-The catalog exposed to Claude Code is rebuilt in memory when an account is
-added or removed. Requests are routed by exact model ID, so the selected model
-can change providers while Claude Code keeps the same conversation and
-subagent harness. Claude Code's `ultracode` effort is translated to GPT-5.6
+The catalog is rebuilt in memory when an account is added or removed. Requests
+are routed by exact model ID, so the selected model can change providers while
+the same conversation and subagent harness remain active. `ultracode` is sent
+to the harness as `xhigh` and translated to OpenAI
 `reasoning.effort = "xhigh"`.
 
 When `/fast` is on, the same translation path adds
@@ -150,11 +156,9 @@ Anthropic Console routes receive `speed = "fast"` plus
 gateway strips client-supplied fast fields, so unsupported providers and Claude
 models cannot opt themselves into premium processing.
 
-Claudex enables Claude Code's gateway model discovery automatically. Claude
-Code refreshes that picker at process startup, so a provider added during the
-very first empty session is selected immediately with `/model <model-id>`; its
-clickable picker entry is present on the next `claudex` launch. Gateway picker
-discovery requires Claude Code 2.1.129 or newer.
+The `/model` picker is owned by Claudex and refreshes while authentication is in
+progress. It never synthesizes fake Opus, Sonnet, or Haiku rows for non-Claude
+models. Claude Code 2.1.129 or newer is required for the streaming harness.
 
 ## Privacy enforcement
 
@@ -176,10 +180,11 @@ claudex profile list
 claudex config show
 ```
 
-Existing enabled profiles automatically appear in the unified bare session.
-Claude subscription OAuth profiles are rejected; use an Anthropic Console API
-key instead. See [config.example.toml](./config.example.toml) for advanced
-provider configuration.
+Legacy profiles stay out of the account-first `/model` picker and can be
+launched explicitly with `claudex run <legacy-profile>`. Claude subscription
+OAuth profiles are rejected; use an Anthropic Console API key instead. See
+[config.example.toml](./config.example.toml) for advanced provider
+configuration.
 
 ## Development
 
