@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claudex Models</title>
+  <style>
+    :root { color-scheme: dark; --bg:#090b10; --panel:#121620; --line:#283044; --text:#f5f7fb; --muted:#9aa6bb; --blue:#77a7ff; --green:#69d39d; --red:#ff7f8d; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 10% 0%,#17213a 0,transparent 36%),var(--bg); color:var(--text); font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { width:min(980px,calc(100% - 32px)); margin:0 auto; padding:54px 0 80px; }
+    header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin-bottom:34px; }
+    h1 { font-size:clamp(32px,6vw,58px); letter-spacing:-.055em; line-height:1; margin:0 0 14px; }
+    h2 { font-size:18px; margin:0; }
+    p { margin:0; color:var(--muted); }
+    .local { flex:none; border:1px solid #275b47; background:#10281f; color:#91e6bb; border-radius:999px; padding:7px 12px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+    .section-title { display:flex; align-items:end; justify-content:space-between; gap:16px; margin:34px 0 13px; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .card { border:1px solid var(--line); background:linear-gradient(145deg,rgba(23,28,40,.96),rgba(15,18,27,.96)); border-radius:17px; padding:22px; box-shadow:0 15px 50px rgba(0,0,0,.18); }
+    .provider-head,.account-head,.model-row,.model-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .provider-mark { width:42px; height:42px; display:grid; place-items:center; border-radius:12px; font-weight:800; font-size:19px; background:#202a3e; color:#dce7ff; margin-bottom:20px; }
+    .card p { min-height:46px; margin:8px 0 20px; }
+    button { appearance:none; border:1px solid #3b4b69; background:#202a3d; color:var(--text); border-radius:10px; padding:10px 14px; font:inherit; font-weight:650; cursor:pointer; }
+    button:hover { border-color:#6688c4; background:#283651; }
+    button:disabled { opacity:.55; cursor:wait; }
+    button.primary { background:#e9f0ff; color:#111827; border-color:#e9f0ff; }
+    button.danger { color:#ffb7bf; border-color:#673640; background:#28161b; }
+    button.small { padding:6px 9px; font-size:12px; }
+    .status { min-height:24px; margin-top:13px; color:var(--muted); font-size:13px; }
+    .status.error { color:var(--red); }
+    .status.connected { color:var(--green); }
+    .badge { color:var(--green); border:1px solid #2d674f; background:#10271f; border-radius:999px; padding:3px 8px; font-size:11px; font-weight:700; }
+    .empty { border:1px dashed #35405a; border-radius:16px; padding:30px; text-align:center; color:var(--muted); }
+    .accounts { display:grid; gap:12px; }
+    .models { margin-top:16px; display:grid; gap:8px; }
+    .model-row { border-top:1px solid #252c3c; padding-top:9px; }
+    code { color:#cfe0ff; font:13px ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
+    dialog { width:min(520px,calc(100% - 28px)); border:1px solid var(--line); border-radius:18px; background:#121620; color:var(--text); padding:24px; box-shadow:0 30px 100px #000; }
+    dialog::backdrop { background:rgba(2,4,8,.78); backdrop-filter:blur(4px); }
+    dialog h2 { font-size:23px; margin-bottom:9px; }
+    dialog p { margin-bottom:18px; }
+    input { width:100%; border:1px solid #3a465e; background:#0b0e15; color:var(--text); border-radius:10px; padding:12px; font:14px ui-monospace,SFMono-Regular,Consolas,monospace; outline:none; }
+    input:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(119,167,255,.13); }
+    .actions { display:flex; justify-content:flex-end; gap:9px; margin-top:18px; }
+    .fine { font-size:12px; margin-top:16px; }
+    .fine a { color:#a9c6ff; }
+    .notice { margin-top:30px; border-left:3px solid #50658f; padding:3px 0 3px 14px; font-size:13px; color:var(--muted); }
+    @media (max-width:700px) { .grid { grid-template-columns:1fr; } header { display:block; } .local { display:inline-block; margin-top:18px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Models, without the profile shuffle.</h1>
+      <p>Connect providers here, then switch with <code>/model</code> in the same Claude Code session.</p>
+    </div>
+    <span class="local">Localhost only</span>
+  </header>
+
+  <div class="section-title"><h2>Add a provider</h2><p>Credentials stay in your OS credential store.</p></div>
+  <section class="grid">
+    <article class="card">
+      <div class="provider-head"><div class="provider-mark">O</div><span id="openai-badge"></span></div>
+      <h2>OpenAI</h2>
+      <p>Sign in with ChatGPT in your browser. Claudex stores the resulting token locally.</p>
+      <button id="openai-connect" class="primary">Connect OpenAI</button>
+      <div id="openai-status" class="status"></div>
+    </article>
+    <article class="card">
+      <div class="provider-head"><div class="provider-mark">A</div><span id="anthropic-badge"></span></div>
+      <h2>Anthropic API</h2>
+      <p>Open Anthropic Console, create an API key, and save it directly to your local credential store.</p>
+      <button id="anthropic-connect">Connect Anthropic</button>
+      <div class="status">API billing applies through your Anthropic Console account.</div>
+    </article>
+  </section>
+
+  <div class="section-title"><h2>Connected models</h2><p id="model-count"></p></div>
+  <section id="accounts" class="accounts"><div class="empty">No provider models connected yet.</div></section>
+
+  <p class="notice">A newly connected model works in this session immediately with <code>/model &lt;model-id&gt;</code>. Claude Code refreshes its clickable gateway entries when it starts, so persisted models also appear in the <code>/model</code> picker on later launches.</p>
+
+  <p class="notice">Claude Free, Pro, and Max credentials stay inside official Claude products. Anthropic requires third-party gateways like Claudex to use API keys, so this page intentionally does not offer Claude subscription login.</p>
+</main>
+
+<dialog id="anthropic-dialog">
+  <h2>Connect Anthropic API</h2>
+  <p>Anthropic Console opened in another tab. Create a key there, paste it below, and it will be written to your OS credential store—not to <code>accounts.json</code>.</p>
+  <input id="anthropic-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+  <div id="anthropic-error" class="status error"></div>
+  <div class="actions">
+    <button id="anthropic-cancel">Cancel</button>
+    <button id="anthropic-save" class="primary">Save locally</button>
+  </div>
+  <p class="fine">By connecting, requests you explicitly send to an Anthropic model go to the Anthropic API. <a href="https://code.claude.com/docs/en/legal-and-compliance" target="_blank" rel="noopener noreferrer">Why API keys?</a></p>
+</dialog>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let snapshot = {accounts:[], default_model:null, auth:{openai:{state:'idle',message:''}}};
+
+  async function api(path, options={}) {
+    const response = await fetch(path, {cache:'no-store', ...options});
+    if (!response.ok) {
+      let message = `Request failed (${response.status})`;
+      try { message = (await response.json()).error || message; } catch (_) {}
+      throw new Error(message);
+    }
+    return response.status === 204 ? null : response.json();
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function render() {
+    const openai = snapshot.accounts.find(a => a.provider === 'openai');
+    const anthropic = snapshot.accounts.find(a => a.provider === 'anthropic');
+    $('openai-badge').innerHTML = openai ? '<span class="badge">Connected</span>' : '';
+    $('anthropic-badge').innerHTML = anthropic ? '<span class="badge">Connected</span>' : '';
+    $('openai-connect').textContent = openai ? 'Reconnect OpenAI' : 'Connect OpenAI';
+
+    const attempt = snapshot.auth.openai;
+    const status = $('openai-status');
+    status.textContent = attempt.message || '';
+    status.className = 'status ' + (attempt.state === 'error' ? 'error' : attempt.state === 'connected' ? 'connected' : '');
+    $('openai-connect').disabled = attempt.state === 'pending';
+
+    const total = snapshot.accounts.reduce((sum,a) => sum + a.models.length, 0);
+    $('model-count').textContent = total ? `${total} available` : '';
+    if (!snapshot.accounts.length) {
+      $('accounts').innerHTML = '<div class="empty">No provider models connected yet. Pick a provider above; this session will update live.</div>';
+      return;
+    }
+    $('accounts').innerHTML = snapshot.accounts.map(account => `
+      <article class="card">
+        <div class="account-head">
+          <div><h2>${escapeHtml(account.label)}</h2><p>${escapeHtml(account.provider === 'openai' ? 'Browser OAuth' : 'Console API key')}</p></div>
+          <button class="small danger" data-remove="${escapeHtml(account.id)}">Remove</button>
+        </div>
+        <div class="models">${account.models.map(model => `
+          <div class="model-row"><code>${escapeHtml(model)}</code><span class="model-actions"><button class="small" data-copy="${escapeHtml(`/model ${model}`)}">Copy switch command</button>${snapshot.default_model === model ? '<span class="badge">Default</span>' : `<button class="small" data-default="${escapeHtml(model)}">Make default</button>`}</span></div>
+        `).join('')}</div>
+      </article>`).join('');
+    document.querySelectorAll('[data-remove]').forEach(button => button.onclick = () => removeAccount(button.dataset.remove));
+    document.querySelectorAll('[data-default]').forEach(button => button.onclick = () => setDefault(button.dataset.default));
+    document.querySelectorAll('[data-copy]').forEach(button => button.onclick = () => copySwitchCommand(button));
+  }
+
+  async function refresh() {
+    try { snapshot = await api('/setup/api/state'); render(); }
+    catch (error) { $('accounts').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`; }
+  }
+
+  $('openai-connect').onclick = async () => {
+    const popup = window.open('about:blank', 'claudex-openai-auth');
+    try {
+      const result = await api('/setup/api/connect/openai', {method:'POST', headers:{'content-type':'application/json'}, body:'{}'});
+      if (popup) popup.location = result.authorization_url; else window.location.href = result.authorization_url;
+      await refresh();
+    } catch (error) {
+      if (popup) popup.close();
+      $('openai-status').textContent = error.message;
+      $('openai-status').className = 'status error';
+    }
+  };
+
+  $('anthropic-connect').onclick = () => {
+    window.open('https://platform.claude.com/settings/keys', '_blank', 'noopener,noreferrer');
+    $('anthropic-key').value = '';
+    $('anthropic-error').textContent = '';
+    $('anthropic-dialog').showModal();
+    $('anthropic-key').focus();
+  };
+  $('anthropic-cancel').onclick = () => $('anthropic-dialog').close();
+  $('anthropic-save').onclick = async () => {
+    const button = $('anthropic-save'); button.disabled = true;
+    try {
+      await api('/setup/api/connect/anthropic', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({api_key:$('anthropic-key').value})});
+      $('anthropic-key').value = '';
+      $('anthropic-dialog').close();
+      await refresh();
+    } catch (error) { $('anthropic-error').textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+
+  async function removeAccount(id) {
+    if (!confirm('Remove this provider and its locally stored credential?')) return;
+    try { await api(`/setup/api/accounts/${encodeURIComponent(id)}`, {method:'DELETE'}); await refresh(); }
+    catch (error) { alert(error.message); }
+  }
+  async function setDefault(model) {
+    try { await api('/setup/api/default', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({model})}); await refresh(); }
+    catch (error) { alert(error.message); }
+  }
+  async function copySwitchCommand(button) {
+    const command = button.dataset.copy;
+    try {
+      await navigator.clipboard.writeText(command);
+      const previous = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => button.textContent = previous, 1200);
+    } catch (_) {
+      window.prompt('Copy this command into Claude Code:', command);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 1500);
+</script>
+</body>
+</html>

@@ -135,15 +135,9 @@ profiles:
 
   # ─── OAuth Subscription Profiles ────────────────────
   # Login first: claudex auth login <provider> --profile <name>
-
-  # Claude Max/Pro (reuses Claude Code's local OAuth credentials)
-  - name: claude-max
-    provider_type: DirectAnthropic
-    base_url: https://api.anthropic.com
-    default_model: sonnet
-    auth_type: oauth
-    oauth_provider: claude
-    enabled: false
+  # Claude Free/Pro/Max OAuth credentials are intentionally unsupported here.
+  # Third-party gateways must use an Anthropic Console API key. The normal
+  # in-session flow is `/models` -> Anthropic API.
 
   # ChatGPT Plus/Pro / Codex subscription (via OpenAI OAuth -> Responses API)
   # The signed-in account controls which model IDs are available.

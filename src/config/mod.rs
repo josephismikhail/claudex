@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use figment::providers::{Env, Format, Serialized};
 use figment::Figment;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::context::ContextEngineConfig;
 use crate::oauth::{AuthType, OAuthProvider};
@@ -40,7 +40,7 @@ pub struct ClaudexConfig {
     pub proxy_host: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    #[serde(default)]
+    #[serde(default, serialize_with = "serialize_persistent_profiles")]
     pub profiles: Vec<ProfileConfig>,
     #[serde(default)]
     pub model_aliases: HashMap<String, String>,
@@ -132,6 +132,10 @@ pub struct ProfileConfig {
     /// 追加到请求 URL 的 query 参数（如 Azure OpenAI 的 api-version）
     #[serde(default)]
     pub query_params: HashMap<String, String>,
+    /// Runtime-only profile synthesized from the persistent account store.
+    /// These are never written back to a user's legacy config file.
+    #[serde(skip)]
+    pub runtime_managed: bool,
 }
 
 /// 参数剥离配置
@@ -226,8 +230,23 @@ impl Default for ProfileConfig {
             max_tokens: None,
             strip_params: StripParams::default(),
             query_params: HashMap::new(),
+            runtime_managed: false,
         }
     }
+}
+
+fn serialize_persistent_profiles<S>(
+    profiles: &[ProfileConfig],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    profiles
+        .iter()
+        .filter(|profile| !profile.runtime_managed)
+        .collect::<Vec<_>>()
+        .serialize(serializer)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -442,7 +461,8 @@ hyperlinks = "auto"
 
 [model_aliases]
 
-# Add your profiles below. Example:
+# Provider accounts are normally added in-session with /models. The advanced
+# legacy profile engine remains available for custom/local endpoints. Example:
 #
 # [[profiles]]
 # name = "openrouter"
@@ -467,9 +487,7 @@ enabled = false
 "#;
 
         std::fs::write(&path, minimal)?;
-        println!("Created default config at: {}", path.display());
-        println!("Edit it to add your API keys and profiles.");
-        println!("Full example: https://github.com/josephismikhail/claudex/blob/main/config.example.toml");
+        tracing::info!(path = %path.display(), "created default Claudex config");
 
         let figment = Figment::from(Serialized::defaults(ClaudexConfig::default()))
             .merge(figment::providers::Toml::string(minimal));

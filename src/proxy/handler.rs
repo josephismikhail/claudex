@@ -56,6 +56,30 @@ pub async fn handle_messages(
 
     let config = state.config.read().await;
 
+    if initial_profile_name == crate::accounts::SESSION_PROFILE_NAME {
+        let root = config.find_profile(crate::accounts::SESSION_PROFILE_NAME);
+        let requested_model = body_value
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(crate::accounts::ONBOARDING_MODEL);
+        let has_routes = root.is_some_and(|profile| !profile.model_routes.is_empty());
+        if !has_routes {
+            let streaming = body_value
+                .get("stream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            drop(config);
+            return onboarding_response(streaming);
+        }
+        if let Some(root) = root {
+            if requested_model == crate::accounts::ONBOARDING_MODEL
+                || !root.model_routes.contains_key(requested_model)
+            {
+                body_value["model"] = Value::String(root.default_model.clone());
+            }
+        }
+    }
+
     let resolved_profile_name =
         match resolve_model_route(&config, &initial_profile_name, &body_value) {
             Ok(name) => name,
@@ -84,6 +108,29 @@ pub async fn handle_messages(
         }
     };
     normalize_claude_oauth_base_url(&mut profile);
+
+    if is_forbidden_claude_subscription(&profile) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "Claude Free/Pro/Max credentials cannot be routed by Claudex. Connect an Anthropic Console API key with /models.",
+        )
+            .into_response();
+    }
+
+    if profile.auth_type == AuthType::ApiKey && profile.api_key.is_empty() {
+        if let Some(entry_name) = profile.api_key_keyring.as_deref() {
+            match crate::accounts::load_api_key(entry_name) {
+                Ok(api_key) => profile.api_key = api_key,
+                Err(error) => {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        format!("API key credential error: {error}"),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
 
     if !profile.enabled {
         return (
@@ -225,6 +272,103 @@ pub async fn handle_messages(
             (StatusCode::BAD_GATEWAY, format!("proxy error: {e}")).into_response()
         }
     }
+}
+
+fn is_forbidden_claude_subscription(profile: &ProfileConfig) -> bool {
+    profile.auth_type == AuthType::OAuth
+        && profile
+            .oauth_provider
+            .as_ref()
+            .is_some_and(|provider| provider.normalize() == crate::oauth::OAuthProvider::Claude)
+}
+
+fn onboarding_response(streaming: bool) -> Response {
+    const TEXT: &str = "No provider models are connected yet. Run /models to open the local Claudex account manager, connect OpenAI or Anthropic, then use /model to switch models without leaving this session.";
+
+    if !streaming {
+        return (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )],
+            serde_json::to_vec(&serde_json::json!({
+                "id": "msg_claudex_onboarding",
+                "type": "message",
+                "role": "assistant",
+                "model": crate::accounts::ONBOARDING_MODEL,
+                "content": [{"type": "text", "text": TEXT}],
+                "stop_reason": "end_turn",
+                "stop_sequence": null,
+                "usage": {"input_tokens": 0, "output_tokens": 0}
+            }))
+            .unwrap_or_default(),
+        )
+            .into_response();
+    }
+
+    let events = [
+        (
+            "message_start",
+            serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_claudex_onboarding",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": crate::accounts::ONBOARDING_MODEL,
+                    "content": [],
+                    "stop_reason": null,
+                    "stop_sequence": null,
+                    "usage": {"input_tokens": 0, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""}
+            }),
+        ),
+        (
+            "content_block_delta",
+            serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": TEXT}
+            }),
+        ),
+        (
+            "content_block_stop",
+            serde_json::json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "message_delta",
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {"output_tokens": 0}
+            }),
+        ),
+        ("message_stop", serde_json::json!({"type": "message_stop"})),
+    ];
+    let mut body = String::new();
+    for (event, data) in events {
+        body.push_str("event: ");
+        body.push_str(event);
+        body.push_str("\ndata: ");
+        body.push_str(&data.to_string());
+        body.push_str("\n\n");
+    }
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .body(Body::from(body))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 fn resolve_model_route(
@@ -723,6 +867,16 @@ mod tests {
         normalize_claude_oauth_base_url(&mut profile);
 
         assert_eq!(profile.base_url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn legacy_claude_subscription_profile_is_forbidden() {
+        let profile = ProfileConfig {
+            auth_type: AuthType::OAuth,
+            oauth_provider: Some(crate::oauth::OAuthProvider::Claude),
+            ..Default::default()
+        };
+        assert!(is_forbidden_claude_subscription(&profile));
     }
 
     #[test]

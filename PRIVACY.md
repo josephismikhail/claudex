@@ -3,12 +3,20 @@
 Claudex has no maintainer-operated collection service and does not send
 analytics, crash reports, usage metrics, configuration, prompts, or terminal
 output anywhere for telemetry. It forwards model content only to the provider
-profiles you configure. It has no telemetry or crash-reporting SDK and performs
-no automatic update checks.
+and model the user selects. It has no telemetry or crash-reporting SDK and
+performs no automatic update checks.
+
+The `/models` account manager is a loopback-only page bundled into the binary.
+It loads no third-party scripts, fonts, images, or styles. Browser mutations
+require the page's exact origin. Account metadata is written atomically to
+`~/.config/claudex/accounts.json`; tokens and API keys are stored only in the
+operating system credential store.
 
 ## Default runtime guarantees
 
 - Starting the dashboard or proxy does not contact configured providers.
+- Starting a first session with no accounts returns a local onboarding message
+  and exposes an empty provider-model catalog.
 - Provider health checks run only when you explicitly request a connectivity
   test.
 - Every Claude Code process launched by Claudex has telemetry, Sentry error
@@ -20,6 +28,7 @@ no automatic update checks.
   privacy keys are enforced.
 - Logs remain local. Request bodies are excluded unless you explicitly set
   `CLAUDEX_LOG_REQUEST_BODIES=1`.
+- Claude Free, Pro, and Max OAuth credentials are not accepted or routed.
 
 ## Explicit network operations
 
@@ -28,7 +37,9 @@ provider is local (for example Ollama, LM Studio, or vLLM). Network access can
 still occur when you explicitly:
 
 - send a model request to a configured remote provider;
-- use an OAuth-backed provider, including login and required token refreshes;
+- connect OpenAI, complete OAuth login, or refresh its token;
+- connect Anthropic, which validates the supplied API key and retrieves that
+  account's available models from Anthropic's Models API;
 - add or update a configuration set from a Git or HTTP URL;
 - run a connectivity test;
 - run a Claude Code tool that accesses the network, such as WebFetch or a

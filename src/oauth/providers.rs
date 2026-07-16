@@ -155,10 +155,16 @@ pub async fn login(
         )
     })?;
 
+    if provider == OAuthProvider::Claude {
+        anyhow::bail!(
+            "Claudex does not route Claude Free/Pro/Max credentials. Use /models and connect Anthropic with a Console API key instead"
+        );
+    }
+
     ensure_oauth_profile(config, profile_name, &provider)?;
 
     match provider {
-        OAuthProvider::Claude => login_claude(profile_name).await,
+        OAuthProvider::Claude => unreachable!("Claude subscription routing is rejected above"),
         OAuthProvider::Chatgpt | OAuthProvider::Openai => {
             login_chatgpt(profile_name, force, headless).await
         }
@@ -234,6 +240,9 @@ async fn login_chatgpt_browser(profile_name: &str) -> Result<()> {
     let port = CHATGPT_CALLBACK_PORT;
     let state = uuid::Uuid::new_v4().to_string();
 
+    let callback = super::server::CallbackServer::bind(port, Some(state.clone()))
+        .await
+        .context("failed to start authorization callback listener")?;
     let authorize_url = super::exchange::build_chatgpt_authorize_url(port, &pkce, &state);
 
     println!("Opening browser for ChatGPT login...");
@@ -243,8 +252,8 @@ async fn login_chatgpt_browser(profile_name: &str) -> Result<()> {
 
     let _ = open_browser(&authorize_url);
 
-    // 启动回调服务器等待 authorization code
-    let code = super::server::start_callback_server(port)
+    let code = callback
+        .wait()
         .await
         .context("failed to receive authorization callback")?;
 
@@ -636,30 +645,9 @@ pub async fn refresh(config: &ClaudexConfig, profile_name: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("profile '{}' has no oauth_provider", profile_name))?;
 
     match provider {
-        OAuthProvider::Claude => {
-            let cred = super::source::read_claude_credentials()?;
-            let source = cred.source.clone();
-            let token = cred.into_oauth_token();
-            let refreshed = if let Some(refresh_token) = token.refresh_token.as_deref() {
-                let client = reqwest::Client::new();
-                super::exchange::refresh_claude_token(
-                    &client,
-                    refresh_token,
-                    token.scopes.as_deref(),
-                )
-                .await?
-            } else {
-                token
-            };
-            if let super::source::CredentialSource::ExternalCli(path) = source {
-                super::source::write_claude_credentials_atomic(
-                    std::path::Path::new(&path),
-                    &refreshed,
-                )?;
-            }
-            super::source::store_keyring(profile_name, &refreshed)?;
-            println!("Claude token refreshed for profile '{profile_name}'.");
-        }
+        OAuthProvider::Claude => anyhow::bail!(
+            "Claudex does not refresh or route Claude Free/Pro/Max credentials. Connect an Anthropic Console API key with /models"
+        ),
         OAuthProvider::Google | OAuthProvider::Kimi | OAuthProvider::Gitlab => {
             let cred = super::source::load_credential_chain(provider)?;
             let token = cred.into_oauth_token();
@@ -771,6 +759,23 @@ fn open_browser(url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn claude_subscription_routing_is_rejected_without_mutating_config() {
+        let mut config = ClaudexConfig::default();
+        let error = login(
+            &mut config,
+            "claude",
+            "claude-subscription",
+            false,
+            false,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("does not route Claude"));
+        assert!(config.profiles.is_empty());
+    }
 
     #[test]
     fn test_provider_defaults_claude() {

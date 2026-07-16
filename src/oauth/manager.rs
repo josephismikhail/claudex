@@ -146,7 +146,9 @@ impl TokenManager {
                 self.load_chatgpt_token(profile, force_refresh).await
             }
             OAuthProvider::Github => self.load_github_token(profile).await,
-            OAuthProvider::Claude => self.load_claude_token(profile, force_refresh).await,
+            OAuthProvider::Claude => anyhow::bail!(
+                "Claude Free/Pro/Max credentials cannot be refreshed or routed by Claudex; use an Anthropic Console API key from /models"
+            ),
             OAuthProvider::Google => self.load_simple_token(provider, profile).await,
             OAuthProvider::Kimi => self.load_simple_token(provider, profile).await,
             OAuthProvider::Qwen => self.load_simple_token(provider, profile).await,
@@ -230,7 +232,7 @@ impl TokenManager {
                 )?;
             }
             CredentialSource::Keyring => {
-                super::source::store_keyring(&profile.name, &refreshed)?;
+                super::source::store_keyring(keyring_name(profile), &refreshed)?;
             }
             _ => {}
         }
@@ -289,12 +291,20 @@ fn load_token_with_keyring(
     provider: &OAuthProvider,
     profile: &ProfileConfig,
 ) -> Result<(OAuthToken, CredentialSource)> {
+    if let Some(entry_name) = profile.api_key_keyring.as_deref() {
+        return super::source::load_keyring(entry_name)
+            .map(|token| (token, CredentialSource::Keyring))
+            .with_context(|| {
+                format!("credential '{entry_name}' is unavailable in the OS credential store")
+            });
+    }
+
     match super::source::load_credential_chain(provider) {
         Ok(credential) => {
             let source = credential.source.clone();
             Ok((credential.into_oauth_token(), source))
         }
-        Err(external_error) => super::source::load_keyring(&profile.name)
+        Err(external_error) => super::source::load_keyring(keyring_name(profile))
             .map(|token| (token, CredentialSource::Keyring))
             .with_context(|| format!("external credentials unavailable: {external_error:#}")),
     }
@@ -305,15 +315,22 @@ fn persist_keyring_token_if_needed(
     source: &CredentialSource,
     token: &OAuthToken,
 ) {
-    if matches!(source, CredentialSource::Keyring) {
-        if let Err(error) = super::source::store_keyring(&profile.name, token) {
-            tracing::warn!(
-                profile = %profile.name,
-                error = %error,
-                "could not update refreshed OAuth token in the OS credential store"
-            );
-        }
+    let result = match source {
+        CredentialSource::Keyring => super::source::store_keyring(keyring_name(profile), token),
+        CredentialSource::ExternalCli(_) => super::source::write_codex_credentials_atomic(token),
+        _ => Ok(()),
+    };
+    if let Err(error) = result {
+        tracing::warn!(
+            profile = %profile.name,
+            error = %error,
+        "could not persist refreshed OAuth token"
+        );
     }
+}
+
+fn keyring_name(profile: &ProfileConfig) -> &str {
+    profile.api_key_keyring.as_deref().unwrap_or(&profile.name)
 }
 
 /// 将 token 信息注入到 profile 的 api_key 和 extra_env 中

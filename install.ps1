@@ -107,7 +107,10 @@ try {
     & $destination --version
 
     if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-        Write-Warning "Claude Code was not found in PATH. Install it before running 'claudex run'."
+        Write-Warning "Claude Code was not found in PATH. Install it before running 'claudex'."
+    } else {
+        Write-Host ""
+        Write-Host "Next: run 'claudex', then use /models inside the session."
     }
 } finally {
     if ($null -ne $stagedDestination) {

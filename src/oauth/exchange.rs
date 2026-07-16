@@ -182,9 +182,6 @@ pub async fn refresh_chatgpt_token(
     }
     token.extra = Some(extra);
 
-    // 回写 ~/.codex/auth.json
-    source::write_codex_credentials_atomic(&token)?;
-
     tracing::info!("ChatGPT token refreshed successfully");
     Ok(token)
 }

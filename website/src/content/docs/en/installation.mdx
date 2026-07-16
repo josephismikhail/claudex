@@ -1,71 +1,54 @@
 ---
 title: Installation
-description: How to install Claudex on your system
+description: Install Claudex, launch one session, and add providers from /models
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-## Install Methods
+## Install
 
 <Tabs>
   <TabItem label="PowerShell" icon="terminal">
     ```powershell
     irm https://raw.githubusercontent.com/josephismikhail/claudex/main/install.ps1 | iex
     ```
-    On Windows x64, the installer downloads the release archive, verifies its SHA-256 checksum, installs to `%LOCALAPPDATA%\\Programs\\Claudex\\bin`, and adds that directory to the user `PATH`.
+
+    The Windows x64 installer verifies the release SHA-256 checksum, installs
+    under `%LOCALAPPDATA%\Programs\Claudex\bin`, and adds that directory to the
+    current user's `PATH`. WSL is not required.
   </TabItem>
-  <TabItem label="One-liner" icon="terminal">
+  <TabItem label="Linux / macOS" icon="terminal">
     ```bash
     curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
-    ```
-    The install script auto-detects your OS and architecture, downloads the latest release from GitHub, and installs to `~/.local/bin/claudex`.
-
-    Override the install directory:
-    ```bash
-    CLAUDEX_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/josephismikhail/claudex/main/install.sh | bash
     ```
   </TabItem>
   <TabItem label="Cargo" icon="seti:rust">
     ```bash
     cargo install --git https://github.com/josephismikhail/claudex
     ```
-    Requires the Rust toolchain. The binary will be installed to `~/.cargo/bin/claudex`.
   </TabItem>
   <TabItem label="GitHub Releases" icon="github">
-    Download the pre-built binary for your platform from [GitHub Releases](https://github.com/josephismikhail/claudex/releases).
-
-    Available targets:
-    - `x86_64-unknown-linux-gnu`
-    - `x86_64-unknown-linux-musl`
-    - `aarch64-unknown-linux-gnu`
-    - `aarch64-unknown-linux-musl`
-    - `x86_64-apple-darwin`
-    - `aarch64-apple-darwin`
-    - `x86_64-pc-windows-msvc`
-
-    Extract and place the binary in your `PATH`:
-    ```bash
-    tar xzf claudex-v*.tar.gz
-    chmod +x claudex
-    mv claudex ~/.local/bin/
-    ```
+    Download a signed release asset and its SHA-256 file from
+    [GitHub Releases](https://github.com/josephismikhail/claudex/releases).
   </TabItem>
 </Tabs>
 
-## System Requirements
+## Requirements
 
-| Requirement | Details |
-|-------------|---------|
-| **OS** | macOS (Intel / Apple Silicon), Linux (x86_64 / ARM64), Windows (x86_64) |
-| **Claude Code** | Must be installed and accessible as `claude` in your PATH |
-| **Optional** | [Ollama](https://ollama.com) for smart routing and context engine features |
+- Windows x64, macOS, or Linux
+- Claude Code installed as `claude` in `PATH`
 
-## Verify Installation
+## Start
 
-```bash
-claudex --version
+```powershell
+claudex
 ```
 
-## Next Steps
+There is no initial configuration step. Claude Code opens with an empty
+provider catalog. Inside that session:
 
-After installation, [configure your first provider profile](/en/configuration/).
+1. Run `/models`.
+2. Connect OpenAI or Anthropic API in the local browser page.
+3. Return to Claude Code and run `/model`.
+
+The account and model catalog persist the next time you run `claudex`.

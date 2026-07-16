@@ -1,198 +1,39 @@
 ---
-title: OAuth Subscriptions
-description: Use existing provider subscriptions with Claude Code through OAuth authentication
+title: Provider Accounts
+description: Persistent OpenAI and Anthropic accounts managed from /models
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+## Open the account manager
 
-Claudex supports OAuth-based authentication for 7 providers, letting you use existing subscriptions (Claude Max, ChatGPT Plus, GitHub Copilot, etc.) without separate API keys.
+Run `/models` inside Claude Code. Claudex installs that command as a personal
+skill before the session starts. If the user already owns a `/models` skill,
+Claudex preserves it and installs `/claudex-models` instead.
 
-## Overview
+The page is served by the loopback proxy and bundles all HTML, CSS, and
+JavaScript in the Claudex binary. It makes no background provider request.
 
-Instead of providing an `api_key`, you configure `auth_type = "oauth"` and specify an `oauth_provider`. Claudex handles the full credential chain: reading tokens from native CLI configs, performing device code flows, storing tokens in the system keyring, and auto-refreshing before expiry.
+## OpenAI
 
-```toml
-[[profiles]]
-name = "codex-sub"
-provider_type = "OpenAIResponses"
-base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.6"
-auth_type = "oauth"
-oauth_provider = "openai"
-```
+Click **Connect OpenAI** to open ChatGPT browser authorization. Claudex uses
+PKCE, validates OAuth state, binds the callback listener before opening the
+authorization URL, and stores the resulting token in the OS credential store.
+Required refreshes happen only when the selected OpenAI model is used.
 
-## Supported Providers
+## Anthropic API
 
-| Provider | `oauth_provider` | Login Method | Fallback |
-|----------|-----------------|--------------|----------|
-| Claude | `claude` | Reads `~/.claude/.credentials.json` | — |
-| ChatGPT/Codex | `openai` | Browser PKCE or Device Code | `~/.codex/auth.json` (Codex CLI) |
-| Google Gemini | `google` | Reads Gemini CLI credentials | — |
-| Kimi | `kimi` | Reads Kimi CLI credentials | — |
-| Qwen | `qwen` | Device Code flow | — |
-| GitHub Copilot | `github` | Device Code flow | `~/.config/github-copilot/` |
-| GitLab Duo | `gitlab` | `GITLAB_TOKEN` environment variable | — |
+Click **Connect Anthropic** to open Anthropic Console, create an API key, and
+paste it into the localhost page. On that explicit action, Claudex validates the
+key and requests the account's model catalog from Anthropic's Models API. The
+key itself is stored in the OS credential store.
 
-## Credential Chain
+Claude Free, Pro, and Max OAuth credentials cannot be offered or routed by a
+third-party gateway. Claudex rejects that legacy configuration and directs the
+user to an Anthropic Console API key. See Anthropic's
+[credential-use policy](https://code.claude.com/docs/en/legal-and-compliance).
 
-Each provider follows a credential chain pattern:
+## Persistent state
 
-1. **Read the native CLI credential cache** (provider-specific paths)
-2. **Fall back to the system keyring** for a profile-specific token
-3. **Initiate OAuth flow** (browser PKCE or device code) if no token found
-
-Once obtained, tokens are stored in the system keyring for subsequent use.
-
-## Token Management
-
-### Token Structure
-
-```
-OAuthToken {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_at: Option<i64>,       // Unix milliseconds
-    token_type: Option<String>,
-    scopes: Option<Vec<String>>,
-    extra: Option<Value>,          // provider-specific data
-}
-```
-
-### Auto-Refresh
-
-The proxy checks token expiry before each request. If a token is within 60 seconds of expiration:
-
-1. Attempt to refresh using `refresh_token` (if available)
-2. On successful refresh, atomically update the owning local credential store
-3. If refresh fails, invalidate the token and prompt re-login on next use
-
-### 401 Retry
-
-When a provider returns HTTP 401, the proxy:
-
-1. Invalidates the current token
-2. Attempts a fresh token load from the credential chain
-3. Retries the request once with the new token
-4. If retry fails, returns the error to Claude Code
-
-## Provider Details
-
-### Claude
-
-Claude OAuth profiles run through the same loopback gateway as other providers. The gateway reuses Claude Code's OAuth session from `~/.claude/.credentials.json`, sends the required Bearer OAuth headers upstream, and atomically persists rotated refresh tokens. Keeping Claude behind the gateway allows `model_routes` to switch between Claude and ChatGPT subscriptions in one session.
-
-```toml
-[[profiles]]
-name = "claude-max"
-provider_type = "DirectAnthropic"
-base_url = "https://api.anthropic.com"
-default_model = "sonnet"
-auth_type = "oauth"
-oauth_provider = "claude"
-```
-
-No separate Claudex OAuth flow is required. Run `claude auth login` once; `claudex auth login claude --profile claude-max` can also copy the local token into the OS credential store.
-
-### ChatGPT / Codex
-
-Supports two OAuth flows:
-
-1. **Browser PKCE**: Opens a browser window for OpenAI login, receives token via local callback server
-2. **Device Code**: For headless environments, displays a code to enter at a URL
-
-Claudex also reads tokens from the Codex CLI config at `~/.codex/auth.json` as a fallback. The `ChatGPT-Account-ID` header is auto-extracted from the Codex CLI auth file.
-
-```bash
-# Browser flow (default)
-claudex auth login openai --profile codex-sub
-
-# Device code flow (headless)
-claudex auth login openai --profile codex-sub --headless
-```
-
-### GitHub Copilot
-
-Uses GitHub's Device Code flow:
-
-1. `claudex auth login github` displays a device code
-2. Open `https://github.com/login/device` and enter the code
-3. Token is stored in the system keyring
-
-Falls back to reading existing tokens from `~/.config/github-copilot/` if available.
-
-### GitLab Duo
-
-Uses a Personal Access Token via the `GITLAB_TOKEN` environment variable:
-
-```bash
-export GITLAB_TOKEN=glpat-...
-claudex auth login gitlab --profile gitlab-duo
-```
-
-For self-hosted GitLab instances:
-
-```bash
-claudex auth login gitlab --enterprise-url https://gitlab.mycompany.com --profile gitlab-duo
-```
-
-### Google Gemini
-
-Reads credentials from the Gemini CLI configuration. Install and authenticate with the Gemini CLI first, then `claudex auth login google` reads the stored token.
-
-### Qwen
-
-Uses the OAuth Device Code flow. Claudex displays a code and URL for authentication:
-
-```bash
-claudex auth login qwen --profile qwen-oauth
-# Displays: Go to https://... and enter code: XXXX-XXXX
-```
-
-### Kimi
-
-Reads credentials from the Kimi CLI configuration, similar to the Google Gemini flow.
-
-## Gateway Auth Mode
-
-When launching Claude Code with any OAuth profile, Claudex sets:
-
-```
-ANTHROPIC_AUTH_TOKEN=claudex-passthrough
-```
-
-This prevents a conflict with Claude Code's own login. The placeholder is accepted only by the local gateway and is replaced with the selected provider's actual credential before the upstream request.
-
-## CLI Commands
-
-```bash
-# Log in to a provider
-claudex auth login <PROVIDER> [--profile <NAME>] [--enterprise-url <URL>] [--headless]
-
-# Check auth status for all OAuth profiles
-claudex auth status
-
-# Check a specific provider
-claudex auth status openai
-
-# Manually refresh a token
-claudex auth refresh <PROVIDER>
-
-# Remove stored tokens
-claudex auth logout <PROVIDER>
-```
-
-## Provider Defaults
-
-When you create a profile with `auth_type = "oauth"`, each provider has built-in defaults for `base_url`, `provider_type`, and `default_model`:
-
-| Provider | Default base_url | Default provider_type | Default model |
-|----------|-----------------|----------------------|---------------|
-| Claude | `https://api.anthropic.com` | DirectAnthropic | `sonnet` |
-| ChatGPT | `https://chatgpt.com/backend-api/codex` | OpenAIResponses | `gpt-5.6` |
-| GitHub | `https://api.githubcopilot.com` | OpenAICompatible | `gpt-4o` |
-| GitLab | `https://gitlab.com/api/v4/ai/llm/proxy` | OpenAICompatible | `claude-sonnet-4-20250514` |
-| Google | `https://generativelanguage.googleapis.com/v1beta/openai` | OpenAICompatible | `gemini-2.5-pro` |
-| Qwen | `https://chat.qwen.ai/api` | OpenAICompatible | `qwen3-235b-a22b` |
-| Kimi | `https://api.moonshot.cn/v1` | OpenAICompatible | `kimi-k2-0905-preview` |
-
-These defaults are used if you omit `base_url` or `default_model` from the profile config.
+`~/.config/claudex/accounts.json` contains only provider labels, model IDs, a
+credential-store reference, and the default model. It never contains a token or
+API key. Adding or removing an account rebuilds the running model catalog in
+memory, so `/model` can switch immediately without a new Claude Code session.

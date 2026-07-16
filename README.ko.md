@@ -1,3 +1,5 @@
+> **Legacy translation:** This file describes v0.2. See [README.md](./README.md) for the v0.3 account-first workflow. Claude subscription routing is no longer supported.
+
 <p align="center">
   <h1 align="center">Claudex</h1>
   <p align="center">지능형 번역 프록시를 내장한 멀티 인스턴스 Claude Code 매니저</p>

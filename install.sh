@@ -113,6 +113,8 @@ main() {
 
     echo
     "$INSTALL_DIR/claudex" --version 2>/dev/null || true
+    echo
+    echo "Next: run 'claudex', then use /models inside the session."
 }
 
 main "$@"

@@ -1,173 +1,48 @@
 ---
-title: Model Slot Mapping
-description: Map Claude Code's /model switcher to any provider's models
+title: Live Model Switching
+description: Switch provider models with /model without restarting Claude Code
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+Claudex presents one model catalog to Claude Code and routes each exact model ID
+to its connected provider.
 
-Claude Code has a built-in `/model` command that switches between three model slots: **haiku** (fast), **sonnet** (balanced), and **opus** (powerful). By default, these map to Anthropic models, but Claudex lets you map each slot to any provider's model.
-
-## Configuration
-
-Add a `[profiles.models]` table to any profile:
-
-```toml
-[[profiles]]
-name = "grok"
-provider_type = "OpenAICompatible"
-base_url = "https://api.x.ai/v1"
-api_key = "xai-..."
-default_model = "grok-3-beta"
-
-[profiles.models]
-haiku = "grok-3-mini-beta"
-sonnet = "grok-3-beta"
-opus = "grok-3-beta"
+```text
+/model -> gpt-5.6          -> OpenAI Responses API
+/model -> claude-sonnet-5  -> Anthropic Messages API
 ```
 
-When you type `/model sonnet` inside Claude Code, Claudex resolves it to `grok-3-beta`. The `/model opus` command maps to `grok-3-beta`, and so on.
+## Live updates
 
-## How It Works
+When `/models` connects or removes an account, the running proxy rebuilds its
+catalog in memory. A session that started with zero providers does not need to
+restart: requests still addressed to the local onboarding model are rewritten
+to the newly selected default, and `/model <model-id>` switches to any other
+connected model immediately.
 
-When launching Claude Code, Claudex sets three environment variables:
+Claudex opts into Claude Code's gateway model discovery. Claude Code refreshes
+the clickable `/model` picker at process startup, so models added during the
+first empty session appear there on the next launch. The localhost manager
+provides a copy button for the immediate `/model <model-id>` command. Discovery
+requires Claude Code 2.1.129 or newer.
 
-| Environment Variable | Description |
-|---------------------|-------------|
-| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Model name for the haiku slot |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | Model name for the sonnet slot |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` | Model name for the opus slot |
+## Claude Code slots
 
-Claude Code reads these variables to populate its `/model` switcher. If a slot is not configured in the profile, the profile's `default_model` is used as the fallback.
+Claudex maps available model names to Claude Code's haiku, sonnet, and opus
+slots where a natural match exists. The profile-specific `/v1/models` endpoint
+also exposes every exact connected model ID. The private onboarding identifier
+is never listed as a provider model. OpenAI's GPT entry uses Claude Code's
+documented custom gateway-model option because gateway discovery filters model
+IDs that do not begin with `claude` or `anthropic`.
 
-## Provider Model Mapping Examples
+## Ultracode effort
 
-### Grok (xAI)
+For a ChatGPT-backed GPT model, Claude Code's effort selection is translated to
+the OpenAI Responses API `reasoning.effort` field. The `ultracode` label maps to
+`xhigh`. This changes the model's reasoning effort while retaining Claude
+Code's own conversation and subagent harness.
 
-```toml
-[profiles.models]
-haiku = "grok-3-mini-beta"
-sonnet = "grok-3-beta"
-opus = "grok-3-beta"
-```
+## Advanced routes
 
-### OpenAI
-
-```toml
-[profiles.models]
-haiku = "gpt-4o-mini"
-sonnet = "gpt-4o"
-opus = "o1"
-```
-
-### DeepSeek
-
-```toml
-[profiles.models]
-haiku = "deepseek-chat"
-sonnet = "deepseek-chat"
-opus = "deepseek-reasoner"
-```
-
-### Google Gemini
-
-```toml
-[profiles.models]
-haiku = "gemini-2.0-flash"
-sonnet = "gemini-2.5-pro"
-opus = "gemini-2.5-pro"
-```
-
-### ChatGPT Codex (Subscription)
-
-```toml
-[profiles.models]
-haiku = "gpt-5.6"
-sonnet = "gpt-5.6"
-opus = "gpt-5.6"
-```
-
-### Claude (Subscription)
-
-```toml
-[profiles.models]
-haiku = "haiku"
-sonnet = "sonnet"
-opus = "opus"
-```
-
-### Groq
-
-```toml
-[profiles.models]
-haiku = "gemma2-9b-it"
-sonnet = "llama-3.3-70b-versatile"
-opus = "llama-3.3-70b-versatile"
-```
-
-### Mistral
-
-```toml
-[profiles.models]
-haiku = "mistral-small-latest"
-sonnet = "mistral-large-latest"
-opus = "mistral-large-latest"
-```
-
-### Ollama (Local)
-
-```toml
-[profiles.models]
-haiku = "qwen2.5:7b"
-sonnet = "qwen2.5:32b"
-opus = "qwen2.5:72b"
-```
-
-## Default Behavior
-
-If `[profiles.models]` is not specified, all three slots fall back to the profile's `default_model`. This means `/model haiku`, `/model sonnet`, and `/model opus` all use the same model.
-
-<Aside type="tip">
-  For providers with only one or two model tiers, it's common to map multiple slots to the same model. For example, DeepSeek maps both haiku and sonnet to `deepseek-chat`, reserving opus for `deepseek-reasoner`.
-</Aside>
-
-## Route Slots Across Subscription Providers
-
-Use `model_routes` when one Claude Code session should use models from different provider accounts:
-
-```toml
-[[profiles]]
-name = "ultracode"
-provider_type = "OpenAIResponses"
-base_url = "https://chatgpt.com/backend-api/codex"
-default_model = "gpt-5.6"
-auth_type = "oauth"
-oauth_provider = "chatgpt"
-
-[profiles.models]
-haiku = "gpt-5.6"
-sonnet = "gpt-5.6"
-opus = "opus"
-
-[profiles.model_routes]
-"opus" = "claude-max"
-
-[[profiles]]
-name = "claude-max"
-provider_type = "DirectAnthropic"
-base_url = "https://api.anthropic.com"
-default_model = "opus"
-auth_type = "oauth"
-oauth_provider = "claude"
-```
-
-The profile-specific `/v1/models` catalog includes slot models and exact route keys, so `/model` can switch them without restarting. For ChatGPT subscription profiles, Claude Code's effort selection is mapped to Responses API `reasoning.effort`; ultracode therefore reaches GPT-5.6 as `xhigh` while Claude Code retains control of its subagent harness.
-
-## Environment Variable Override
-
-You can override slots without modifying the config by setting environment variables directly:
-
-```bash
-ANTHROPIC_DEFAULT_HAIKU_MODEL=my-fast-model claudex run grok
-```
-
-Environment variables take precedence over profile configuration.
+Existing `model_routes` configuration still works for custom endpoints and is
+folded into the unified session. New account-first installations do not need to
+write route tables manually.

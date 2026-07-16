@@ -21,7 +21,7 @@ export default defineConfig({
         de: 'Claudex',
         pl: 'Claudex',
       },
-      description: 'Multi-instance Claude Code manager with intelligent translation proxy',
+      description: 'Local multi-provider model gateway for Claude Code',
       defaultLocale: 'en',
       locales: {
         en: { label: 'English' },
@@ -39,7 +39,6 @@ export default defineConfig({
       },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/josephismikhail/claudex' },
-        { icon: 'x.com', label: 'X', href: 'https://x.com/StringKe' },
       ],
       head: [
         // Keywords
@@ -100,15 +99,10 @@ export default defineConfig({
             '@context': 'https://schema.org',
             '@type': 'SoftwareApplication',
             name: 'Claudex',
-            description: 'Multi-instance Claude Code manager with intelligent translation proxy',
+            description: 'Local multi-provider model gateway for Claude Code',
             url: 'https://claudex.space',
             applicationCategory: 'DeveloperApplication',
             operatingSystem: 'macOS, Linux, Windows',
-            author: {
-              '@type': 'Person',
-              name: 'StringKe',
-              url: 'https://x.com/StringKe',
-            },
             offers: {
               '@type': 'Offer',
               price: '0',
@@ -327,7 +321,7 @@ export default defineConfig({
             },
             {
               slug: 'features/oauth-subscriptions',
-              label: 'OAuth Subscriptions',
+              label: 'Provider Accounts',
               translations: {
                 'zh-CN': 'OAuth 订阅认证',
                 'zh-TW': 'OAuth 訂閱認證',
