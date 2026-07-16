@@ -56,9 +56,7 @@ pub fn store_keyring(profile_name: &str, token: &OAuthToken) -> Result<()> {
     let json = serde_json::to_string(token).context("failed to serialize token")?;
     let entry = keyring::Entry::new(KEYRING_SERVICE, &entry_name)
         .context("failed to create keyring entry")?;
-    entry
-        .set_password(&json)
-        .context("failed to store token in keyring")?;
+    store_keyring_json(&entry, &json)?;
     Ok(())
 }
 
@@ -66,11 +64,53 @@ pub fn load_keyring(profile_name: &str) -> Result<OAuthToken> {
     let entry_name = keyring_entry_name(profile_name);
     let entry = keyring::Entry::new(KEYRING_SERVICE, &entry_name)
         .context("failed to create keyring entry")?;
-    let json = entry
-        .get_password()
-        .context("no OAuth token found in keyring")?;
+    let json = load_keyring_json(&entry)?;
     let token: OAuthToken = serde_json::from_str(&json).context("failed to parse stored token")?;
     Ok(token)
+}
+
+// Windows Credential Manager limits a generic credential blob to 2,560
+// bytes. `set_password` stores UTF-16 on Windows, which doubles an OAuth JSON
+// payload that otherwise fits. Store UTF-8 bytes directly and retain a
+// password fallback so credentials written by older Claudex releases remain
+// readable.
+#[cfg(windows)]
+fn store_keyring_json(entry: &keyring::Entry, json: &str) -> Result<()> {
+    entry
+        .set_secret(json.as_bytes())
+        .context("failed to store token in Windows Credential Manager")
+}
+
+#[cfg(not(windows))]
+fn store_keyring_json(entry: &keyring::Entry, json: &str) -> Result<()> {
+    entry
+        .set_password(json)
+        .context("failed to store token in keyring")
+}
+
+#[cfg(windows)]
+fn load_keyring_json(entry: &keyring::Entry) -> Result<String> {
+    match entry.get_secret() {
+        Ok(secret) if !secret.contains(&0) => match String::from_utf8(secret) {
+            Ok(json) => Ok(json),
+            Err(_) => entry
+                .get_password()
+                .context("no OAuth token found in Windows Credential Manager"),
+        },
+        Ok(_) => entry
+            .get_password()
+            .context("no OAuth token found in Windows Credential Manager"),
+        Err(secret_error) => entry.get_password().with_context(|| {
+            format!("no OAuth token found in Windows Credential Manager: {secret_error}")
+        }),
+    }
+}
+
+#[cfg(not(windows))]
+fn load_keyring_json(entry: &keyring::Entry) -> Result<String> {
+    entry
+        .get_password()
+        .context("no OAuth token found in keyring")
 }
 
 pub fn delete_keyring(profile_name: &str) -> Result<()> {
@@ -775,5 +815,52 @@ mod tests {
     #[test]
     fn test_keyring_entry_name() {
         assert_eq!(keyring_entry_name("chatgpt-pro"), "chatgpt-pro-oauth-token");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "writes and removes one temporary Windows Credential Manager entry"]
+    fn windows_binary_keyring_round_trip_accepts_chatgpt_sized_tokens() {
+        let profile = format!("windows-keyring-smoke-{}", uuid::Uuid::new_v4());
+        let token = OAuthToken {
+            access_token: "a".repeat(1_561),
+            refresh_token: Some("r".repeat(211)),
+            expires_at: Some(1_900_000_000_000),
+            token_type: Some("Bearer".to_string()),
+            scopes: None,
+            extra: Some(serde_json::json!({
+                "auth_mode": "chatgpt",
+                "account_id": "account-test"
+            })),
+        };
+        let encoded = serde_json::to_vec(&token).unwrap();
+        assert!(encoded.len() < 2_560);
+        assert!(encoded.len() * 2 > 2_560);
+
+        store_keyring(&profile, &token).unwrap();
+        let loaded = load_keyring(&profile).unwrap();
+        delete_keyring(&profile).unwrap();
+
+        assert_eq!(loaded.access_token, token.access_token);
+        assert_eq!(loaded.refresh_token, token.refresh_token);
+        assert_eq!(loaded.extra, token.extra);
+
+        let legacy = OAuthToken {
+            access_token: "legacy-access".to_string(),
+            refresh_token: Some("legacy-refresh".to_string()),
+            expires_at: None,
+            token_type: Some("Bearer".to_string()),
+            scopes: None,
+            extra: None,
+        };
+        let legacy_entry =
+            keyring::Entry::new(KEYRING_SERVICE, &keyring_entry_name(&profile)).unwrap();
+        legacy_entry
+            .set_password(&serde_json::to_string(&legacy).unwrap())
+            .unwrap();
+        let loaded_legacy = load_keyring(&profile).unwrap();
+        delete_keyring(&profile).unwrap();
+        assert_eq!(loaded_legacy.access_token, legacy.access_token);
+        assert_eq!(loaded_legacy.refresh_token, legacy.refresh_token);
     }
 }

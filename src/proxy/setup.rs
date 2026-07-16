@@ -147,10 +147,10 @@ pub async fn connect_openai(State(state): State<Arc<ProxyState>>, headers: Heade
                 message: "OpenAI is connected. Use /model in Claude Code to switch.".to_string(),
             },
             Err(error) => {
-                tracing::warn!(%error, "OpenAI account connection failed");
+                tracing::warn!(error = ?error, "OpenAI account connection failed");
                 AuthAttempt {
                     state: AttemptState::Error,
-                    message: error.to_string(),
+                    message: format!("{error:#}"),
                 }
             }
         };
