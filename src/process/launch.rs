@@ -16,8 +16,50 @@ use crate::terminal;
 
 #[cfg(windows)]
 fn resolve_windows_command_in(binary: &str, paths: Option<&OsStr>, cwd: &Path) -> Result<PathBuf> {
-    which::which_in(binary, paths, cwd)
-        .with_context(|| format!("Claude Code command `{binary}` was not found in PATH"))
+    let resolved = which::which_in(binary, paths, cwd)
+        .with_context(|| format!("Claude Code command `{binary}` was not found in PATH"))?;
+    Ok(native_target_from_cmd_shim(&resolved).unwrap_or(resolved))
+}
+
+#[cfg(windows)]
+fn native_target_from_cmd_shim(shim: &Path) -> Option<PathBuf> {
+    let extension = shim.extension()?.to_string_lossy();
+    if !extension.eq_ignore_ascii_case("cmd") && !extension.eq_ignore_ascii_case("bat") {
+        return None;
+    }
+
+    let contents = std::fs::read_to_string(shim).ok()?;
+    let parent = shim.parent()?;
+    for line in contents.lines() {
+        let Some(open_quote) = line.find('"') else {
+            continue;
+        };
+        let remainder = &line[open_quote + 1..];
+        let Some(close_quote) = remainder.find('"') else {
+            continue;
+        };
+        let command = &remainder[..close_quote];
+        let trailing = &remainder[close_quote + 1..];
+        if !trailing.split_whitespace().any(|token| token == "%*") {
+            continue;
+        }
+        let Some(prefix) = command.get(..5) else {
+            continue;
+        };
+        if !prefix.eq_ignore_ascii_case("%dp0%") {
+            continue;
+        }
+        if !command.to_ascii_lowercase().ends_with(".exe") {
+            continue;
+        }
+
+        let relative = command[5..].trim_start_matches(['\\', '/']);
+        let target = parent.join(relative);
+        if target.is_file() {
+            return Some(target);
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -467,6 +509,31 @@ mod tests {
         assert_eq!(
             std::fs::canonicalize(resolved).unwrap(),
             std::fs::canonicalize(script).unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_native_executable_forwarded_by_npm_cmd_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("claude.cmd");
+        let target = dir
+            .path()
+            .join("node_modules/@anthropic-ai/claude-code/bin/claude.exe");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"not executed by this resolution test").unwrap();
+        std::fs::write(
+            &script,
+            "@echo off\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\" %*\r\n",
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_windows_command_in("claude", Some(dir.path().as_os_str()), dir.path()).unwrap();
+
+        assert_eq!(
+            std::fs::canonicalize(resolved).unwrap(),
+            std::fs::canonicalize(target).unwrap()
         );
     }
 
